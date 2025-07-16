@@ -1,0 +1,115 @@
+# Build artifacts and object files
+*.o
+*.obj
+*.exe
+*.out
+*.app
+
+# Executables
+run_tests
+debug_tiger
+test_runner
+
+# Compiled libraries
+*.a
+*.so
+*.dylib
+*.dll
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# IDE and editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.vim/
+*.vim
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# Log files
+*.log
+*.log.*
+
+# Test artifacts (keep problem examples)
+empty_test.stackelberg
+malformed_test.stackelberg
+test_*.stackelberg
+
+# CMake files (if using CMake in future)
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile.cmake
+
+# Coverage reports
+*.gcov
+*.gcda
+*.gcno
+coverage/
+
+# Profiling data
+*.prof
+gmon.out
+
+# Package files
+*.tar.gz
+*.zip
+*.rar
+
+# Documentation build artifacts
+docs/_build/
+docs/build/
+
+# Python cache (if any Python scripts)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+
+# Node modules (if any JavaScript tools)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Keep these important files:
+!*.cpp
+!*.hpp
+!*.h
+!*.c
+!*.md
+!*.txt
+!*.stackelberg
+!Makefile
+!CMakeLists.txt
+!.gitignore
+!README* 
