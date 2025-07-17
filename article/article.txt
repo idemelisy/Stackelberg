@@ -1,0 +1,2000 @@
+ε-Optimal Solutions for Leader–Follower Partially Observable Stochastic Games:
+The Credible Markov Decision Process Approach
+Anonymous submission
+
+Abstract
+The past decade has seen a notable resurgence in both applied
+and theoretical research on leader–follower partially observable stochastic games (leader-follower POSGs), spanning domains such as economics, ecology, and cyber-physical security.
+These models seek to compute strong Stackelberg equilibria
+(SSEs), that is, commitment strategies of the leader under
+rational best response by the follower. This paper provides
+a principled analysis of leader-follower POSGs amenable to
+dynamic programming. Our primary contribution is a lossless
+reduction of leader-follower POSGs into a credible Markov decision process, in which follower rationality is embedded into
+the state dynamics under partial observability. This reduction
+enables a Bellman-based characterisation of SSEs. We further
+uncover a uniform continuity property of the value function,
+which supports point-based value iteration. Leveraging these
+insights, we develop an algorithm that computes an ε-optimal
+SSE with provable exploitability bounds. On cyber-physical
+security benchmarks, our method consistently outperforms
+state-of-the-art solvers, yielding substantial gains in leader
+payoff and computational efficiency. This work provides a
+systematic pathway for transferring dynamic programming
+techniques from classical stochastic games to partially observable leader–follower settings.
+
+1
+
+Introduction
+
+The increasing sophistication of cyber-physical
+threats—ranging from attacks on critical infrastructure to coordinated sensor spoofing—calls for robust models
+that capture both uncertainty and strategic interaction.
+Domains such as adversarial patrolling, intrusion detection,
+and surveillance exhibit key structural features: stochastic
+state evolution, asymmetric information, and rational
+adversaries with long-term objectives. These characteristics
+render such domains amenable to formal modelling through
+game-theoretic decision processes with partial observability
+(Yin et al. 2012; An et al. 2012; Chung, Hollinger, and Isler
+2011; Basilico, Coniglio, and Gatti 2016; Basilico, Nittis,
+and Gatti 2016; Vorobeychik et al. 2014).
+Partially observable stochastic games (POSGs) generalise
+both Markov decision processes and partially observable
+Markov decision processes to multi-agent settings. In this
+paper, we focus on leader–follower POSGs, where one player
+(the leader) commits to a policy in advance, and the second
+player (the follower) selects a best-response policy after ob-
+
+serving the leader’s commitment. At execution time, each
+player receives only private observations and lacks access to
+the opponent’s actions, observations, or environment state.
+The solution concept of interest is the strong Stackelberg
+equilibrium (SSE), in which the follower selects an optimal policy—breaking ties in favour of the leader—given the
+leader’s commitment (von Stackelberg 1934; Leitmann 1978;
+Breton, Alj, and Haurie 1988). While SSEs are well-defined
+in both static and dynamic games, the presence of partial
+observability, stochastic transitions, and mixed-motive payoffs significantly complicates the computation of an optimal
+leader policy.
+In cooperative and zero-sum POSGs, dynamic programming methods have enabled tractable planning through value
+functions defined over occupancy states, which summarise
+an agent’s uncertainty about the underlying state and interaction history. In particular, variants of point-based value iteration (PBVI) have been used to approximate optimal value
+functions by performing local backups on sampled occupancy states (Pineau et al. 2003; Dibangoye et al. 2013, 2016;
+Horák and Bošanskỳ 2019; Horák et al. 2023; Peralez et al.
+2024, 2025). These results have led to scalable algorithms
+for structured POSGs with specialised payoff and observability assumptions. Whether such structure can be leveraged in
+general-sum leader–follower settings, however, remains an
+open question.
+To date, most methods for solving leader–follower POSGs
+formulate the problem either as a set of linear programs—one
+per follower response (Conitzer and Sandholm 2006)—or as a
+single large mixed-integer linear program (MILP) (Paruchuri
+et al. 2008; Kiekintveld et al. 2011). While these approaches
+yield exact solutions in small instances, they fail to scale beyond medium-sized problems. Notably, even in deterministic
+and fully observable settings, the size of the induced MILP
+grows rapidly with the horizon length and action branching factor (Vorobeychik and Singh 2012; Vorobeychik et al.
+2014). As a result, these approaches are often intractable for
+planning problems that span more than a few decision stages
+or involve moderate uncertainty.
+A core difficulty is the lack of a dynamic programmingcompatible model that captures both strategic dependence
+and information asymmetry. In leader–follower games, the
+leader’s policy must anticipate how the follower will respond
+over time, including in hypothetical future contingencies that
+
+
+are neither observed nor realised. This coupling breaks the
+recursive decomposability that underpins standard dynamic
+programming. Strategic dependence across stages further
+complicates matters: in the classical centipede game, for instance, backward induction eliminates the possibility of cooperation despite full observability and deterministic transitions
+(Rosenthal 1981; Kreps 2020). In leader–follower POSGs,
+such incentive misalignment is compounded by hidden state
+information and unobserved opponent actions. Some models
+attempt to circumvent these issues by assuming a myopic
+follower (López et al. 2022) or by granting players access to
+each other’s actions during execution (Denardo 1967; Whitt
+1980), but these assumptions are rarely satisfied in real-world
+settings. For example, in empirical studies of intrusion detection, attackers are shown to plan strategically over multiple
+steps without observing the defender’s actions in real time
+(Lye and Wing 2005).
+To address these challenges, we introduce a lossless reduction from any finite-horizon leader–follower POSG to a strategically equivalent model: the credible Markov decision process. In this model, the state is a credible set—an ensemble of
+occupancy states—each representing the leader’s belief over
+hidden system states and joint histories, constrained to reflect
+rational follower responses to the leader’s current and future commitments. This reformulation preserves the leader’s
+optimal value function while enabling recursive value computation. We define a hierarchy of planners with increasing
+information access and show that this structure admits recursive optimality equations. A key technical result is that the
+leader’s value function is uniformly continuous over credible sets, enabling approximation through sparse sampling.
+Building on these properties, we extend point-based value
+iteration to compute near-optimal leader policies over a finite
+collection of credible sets. We provide formal guarantees
+on exploitability and validate the approach empirically on
+standard benchmarks. While MILP-based solvers yield exact
+solutions when tractable, they often fail to scale. Our method
+achieves bounded ε-optimality with formal guarantees in settings where MILP solvers return no solution or certificate
+within the available time or memory budget.
+
+2
+
+Background
+
+This section formalises the model of leader–follower partially
+observable stochastic games, and introduces the key planning
+definitions and solution concepts that underpin our approach.
+Definition 1. A leader–follower partially observable stochastic game M is the tuple (S, AL , AF , ZL , ZF , p, rL , rF , b, ℓ)
+where S is a finite state space; AL , AF are finite leader
+and follower action spaces, respectively; ZL , ZF are finite leader and follower observation spaces, respectively;
+p is the transition function of the game, which prescribes
+p(s′, zL , zF |s, aL , aF ) the probability of the game being
+in state s′ and leader-follower observations being (zL , zF )
+upon taking actions (aL , aF ) in state s; rL , rF are leader
+and follower payoff functions, prescribing leader and follower payoffs rL (s, aL , aF ) and rF (s, aL , aF ) upon taking
+actions (aL , aF ) in state s, respectively; b is the initial belief;
+and ℓ is the planning horizon.
+
+Unlike most prior work on leader–follower stochastic
+games—which assumes full observability of both state and
+opponent actions—we assume neither player knows what
+the opponent sees or does. In particular, each player’s information at a given stage comprises its own history of private observations and chosen actions; the environment’s state
+and the opponent’s actions and observations remain hidden.
+This captures realistic constraints in decentralised domains
+such as security patrol, network routing or multi-robot coordination, where agents detect changes in the environment
+but neither the underlying state nor the exact control inputs
+of others. While this partial observability exacerbates the
+difficulty of anticipating an opponent’s response, the fundamental obstacle in Stackelberg planning arises even under
+full observability. In particular, strategic dependence across
+stages—where the leader’s early decisions influence the follower’s future responses—can obstruct recursive reasoning.
+A classical example is the centipede game: although the state
+and actions are fully observable, the strategic structure invalidates na1̈ve backward induction as a solution method under
+policy commitment. We illustrate this in Appendix A.
+We now formalise policies and value functions in
+leader–follower POSGs. Each player i ∈ {L, F } follows a
+.
+policy πi = (πi,0 , . . . , πi,ℓ−1 ), where each decision rule πi,t
+.
+maps a private history hi,t = (ai,0 , zi,1 , . . . , zi,t ) to an action. For the leader, we allow history-dependent randomised
+policies. For the follower, we restrict to deterministic policies, as it is without loss of generality: any stochastic follower
+policy can be replaced by a deterministic one that is at least
+.
+as good in expectation. Let Πi = Πi,0 × · · · × Πi,ℓ−1 be
+player i’s policy space. Given a leader policy πL and a folπL ,πF
+lower policy πF , the value function vi,t
+: (s, hL , hF ) 7→
+Pℓ−1
+E[ t′ =t ri (st′ , aL,t′ , aF ,t′ ) | s, hL , hF , πL , πF ] denotes the
+expected return from stage t onward for player i ∈ {L, F },
+induced by state s with private histories (hL , hF ) and leaderfollower policies πL and πF . The follower’s best-response
+.
+set to any fixed leader policy πL is defined as: BR(πL ) =
+πL ,πF
+arg maxπF Eb [vF ,0 (s0 , ∅, ∅)]. The leader’s induced value
+.
+πL ,∗
+πL ,πF
+is then: vL,0
+(b) = maxπF ∈BR(πL ) Eb [vL,0
+(s0 , ∅, ∅)].
+∗
+Definition 2. A pair (πL
+, πF∗ ) is a strong Stackelberg equilibπL ,∗
+∗
+∗
+∗
+rium (SSE) if πF ∈ BR(πL
+) and πL
+∈ arg maxπL vL,0
+(b).
+∗
+In an SSE, the leader first commits to πL
+, and the follower
+selects any πF∗ , breaking ties in the leader’s favour.
+Since the follower observes the leader’s policy and selects
+a best response accordingly, it is important to distinguish
+those follower responses that preserve this tie-breaking rule.
+We define a follower policy π̄F to be credible with respect to
+a leader policy πL if:
+#
+#
+′
+πL ,πF
+πL ,πF
+πL ,πF
+π̄F ∈ argmax vL,0 (b) vF ,0 (b) = max
+vF ,0 (b) .
+′
+πF
+
+πF
+
+Credibility ensures that the follower behaves in a way that is
+both rational (maximising its own payoff) and consistent with
+the Stackelberg equilibrium’s tie-breaking convention. This
+concept plays a central role in our reduction to a planningcompatible model (Sanjari, Başar, and Yüksel 2023).
+Definition 3. A reduction from a leader–follower POSG M
+to a surrogate model M′ is lossless if it satisfies: (1) value
+
+
+preservation, for every leader policy πL , the induced value
+in M′ matches that in M; (2) equilibrium correspondence,
+there exists an injective map from the set of SSEs in M to
+those in M′ , such that corresponding leader–follower value
+pairs are equal; (3) information compatibility, no additional
+observability or decision flexibility is introduced in M′ .
+These three conditions ensure that the surrogate model
+exactly preserves the strategic structure of the original game,
+allowing the development of scalable solution algorithms
+without altering the solution space.
+
+3
+
+Credible Markov Decision Processes
+
+This section presents the core contribution of this work: a
+lossless reduction from any leader–follower POSG to a strategically equivalent credible Markov decision process. The
+reduced model preserves the leader’s value function, the equilibrium structure, and the information constraints of the original game, thereby enabling the exact transfer of dynamic
+programming principles and solution methods.
+The key insight is to model the game from the leader’s
+perspective, folding the follower’s behaviour into the transition structure. Under commitment, the follower observes the
+leader’s policy in advance and best-responds to it. However,
+due to partial observability, the follower does not observe the
+leader’s private action-observation history during execution.
+Therefore, the leader must reason over a set of plausible follower responses that satisfy rationality constraints only ex
+post—that is, conditioned on the actual information available
+to the follower during the game. We formalise this reduction
+by casting the game as a bi-level planning process. The follower level serves as a closed-loop evaluator: given any joint
+.
+policy history θt = (b, πL,0 , πF ,0 , . . . , πL,t−1 , πF ,t−1 ), it induces a distribution oθt over triplets (st , hL,t , hF ,t ), given by
+.
+oθt (st , hL,t , hF ,t ) = Pr(st , hL,t , hF ,t | θt ). Each player i ∈
+{L, F } has an expected cumulative payoff up to stage t, given
+Pt−1
+.
+by νi (oθt ) = E[ t′ =0 ri (st′ , aL,t′ , aF ,t′ ) | oθt ]. The next
+occupancy state is obtained via oθt+1 = τ (oθt , πL,t , πF ,t ),
+by propagating the joint distribution under the transition and
+observation model. From the leader’s perspective, the occupancy state is hidden. The leader reasons over the set of
+all possible such distributions consistent with its own deci.
+.
+sion rule history θL,t = (b, πL,0 , . . . , πL,t−1 ). Let θF ,t =
+(b, πF ,0 , . . . , πF ,t−1 ) be the follower’s decision rule history.
+The credible set induced by θL,t is the collection of occupancy states reachable under some follower response, de.
+fined by xθL,t = {oθt | θt = (θL,t , θF ,t ) for some θF ,t }.
+The leader then selects πL,t and transitions to the next credible set xθL,t+1 = T (xθL,t , πL,t ), where T aggregates all
+resulting occupancy states τ (o, πL,t , πF ,t ) for o ∈ xθL,t and
+some πF ,t . Payoffs are assigned only at terminal stage ℓ. The
+payoff for the leader at terminal credible set x is defined by
+#
+#
+.
+′
+R(x) = max νL (o) νF (o) = max
+νF (o ) for all o ∈ x
+′
+o ∈x
+
+expressing that the follower selects a best response among
+elements of x, and the leader receives the most favourable
+such outcome. This bi-level decision-making process defines
+the credible Markov decision process.
+
+Definition 4 (Credible Markov Decision Process). The
+credible Markov decision process is the tuple M′ =
+(X, F, ΣL , ΣF , T, R, x0 , ℓ), where X is the set of credible
+sets; F ⊆ X is the set of terminal credible sets at stage
+.
+ℓ; ΣL = ∪ℓ−1
+t=0 ΠL,t is the set of leader decision rules; ΣF
+is the set of follower decision rules; the transition function
+.
+is defined as T (x, σL ) = {τ (o, σL , σF ) | o ∈ x, σF ∈ ΣF },
+′
+where for all (s , hL aL zL , hF aF zF ),
+P
+o′ (s′ , hL aL zL , hF aF zF ) = s∈S o(s, hL , hF )·
+p(s′ , zL , zF | s, aL , aF ) · σL (aL | hL ) · σF (aF | hF );
+the reward function R is as defined above; the initial credible
+.
+set is x0 = {b}; and ℓ is the planning horizon.
+The credible Markov decision process M′ generalises classical Stackelberg planning models (Conitzer and Sandholm
+2006; Letchford and Conitzer 2010) by embedding rational
+follower dynamics into the state evolution. In this form, the
+leader–follower partially observable stochastic game M can
+be solved by backward recursion over M′ to compute a strong
+Stackelberg equilibrium.
+Theorem 3.1 (Proof in Appendix B). The credible MDP
+M′ associated with the leader–follower POSG M constitutes a lossless reduction. Specifically: (1) value equivalence—for every leader policy πL ∈ ΠL in M, there exists
+′
+a corresponding leader policy πL
+∈ Π′L in M′ such that
+′
+π
+,∗
+πL ,∗
+vM,L,0
+(b) = vML′ ,L,0 (b); (2) policy correspondence—any
+′
+policy πL
+∈ Π′L induces a valid policy πL ∈ ΠL with equivalent execution and value; and (3) information compatibility—policy execution in both M and M′ relies only on private
+action–observation sequences.
+
+4
+
+Optimally Solving M as M′
+
+Having established that the original leader–follower partially
+observable stochastic game M admits a lossless reduction
+into a credible Markov decision process M′ , we now turn
+to the central question: how can the leader’s decisions be
+optimally computed within this reduced model?
+The reduction casts M′ as a sequential decision process in
+which planning is performed over credible sets—collections
+of occupancy states reachable under the leader’s policy. These
+sets compactly represent the information available to the
+leader and serve as sufficient statistics for planning. We proceed by formalising the value function over credible sets and
+deriving Bellman-style optimality equations that characterise
+the leader’s decision problem in M′ . These results provide
+the theoretical foundation for algorithmic methods developed
+in subsequent sections.
+.
+Definition 5. Let πL = (πL,0 , . . . , πL,ℓ−1 ) be a leader polπL ,∗
+icy. The leader value function vL,t
+: X → R at stage t
+under leader policy πL is given as follows: for any terminal
+πL ,∗
+credible set x ∈ F , we have vL
+(x) = R(x) and for any
+transient credible set x ̸∈ F at stage t,
+##
+πL ,∗
+vL
+: x 7→ R T T (· · · T (x, πL,t ) · · · , πL,ℓ−2 ), πL,ℓ−1 .
+To formalise the leader’s planning objective, we now move
+from evaluating the return of a specific policy to identifying the best achievable return across all admissible leader
+
+
+πL ,∗
+policies. Given the leader value function vL
+, previously
+defined for any policy πL ∈ ΠL , we define the optimal leader
+πL ,∗
+∗
+value function as vL
+: x 7→ maxπL ∈ΠL vL
+(x), where the
+follower is assumed to best-respond to the entire leader policy πL , breaking ties in favour of the leader. It will prove
+useful to also define action-value functions to facilitate the
+optimisation process. Given a leader policy πL , the leader
+πL ,∗
+πL ,∗
+action-value function qL
+: (x, σL ) 7→ vL
+(T (x, σL )) under leader policy πL maps pairs of credible sets and leader
+∗
+decision rules to reals. To compute vL
+, we exploit the recursive structure of the credible Markov decision process. At
+each stage, the leader selects a decision rule σL ∈ ΣL . The
+induced transition T (x, σL ) produces the next credible set.
+This enables the following recursive characterisation. Similarly, one can derive the optimal leader action-value function
+πL ,∗
+∗
+qL
+: (x, σL ) 7→ maxπL ∈ΠL qL
+(x, σL ).
+Theorem 4.1 (Proof in Appendix C). The optimal leader
+∗
+value function vL
+satisfies, for any terminal credible set x ∈
+.
+∗
+F , we have vL (x) = R(x) and for any credible set x ∈
+/ F,
+∗
+∗
+vL
+(x) = maxσL ∈ΣL qL
+(x, σL )
+#
+∗
+∗
+qL (x, σL ) = vL T (x, σL ) .
+
+The credible-set space X is composed of structured collections of occupancy states, which are continuous objects
+encoding distributions over unobserved states and histories.
+∗
+While the value function vL
+is defined over X, its structural properties are difficult to analyse directly due to the
+high-dimensional and continuous nature of the underlying
+occupancy states. To gain analytical traction, we consider the
+conditional decomposition of an occupancy state o ∈ x based
+on follower history. Specifically, for any follower private history hF , we define the conditional occupancy state c(o,hF ) ,
+which captures the distribution over environment states and
+private leader histories consistent with both o and hF . Similarly to occupancy states, conditional occupancy states also
+describe a Markov process (Dibangoye et al. 2016).
+Lemma 4.2 (Proof in Appendix D). The next conditional
+.
+occupancy state c′ = τzF (c, σL , aF ) upon receiving follower observation zF after taking leader-follower decisions
+(σL , aF ) starting in conditional occupancy state c is given
+.
+by: for any state s′ and leader history h′L = (hL , aL , zL ),
+P
+c′ (s′ , h′L ) ∝ s c(s, hL )σL (aL |hL )p(s′ , zL , zF |s, aL , aF )
+with normalising constant ηzF (c, σL , aF ).
+.
+We shall use short-hand notations τ̃zF (c, σL , aF ) =
+.
+ηzF (c, σL , aF ) · τzF (c, σL , aF ) and ρi (c, σL , aF ) =
+E[ri (s, aL , aF )|c, σL , aF ] to denote the weighted conditional
+occupancy state and player i’s immediate expected payoff
+upon receiving follower observation zF after taking decisions
+(σL , aF ) in conditional occupancy state c. Besides, each occupancy state o admits a convex decomposition of the form
+#
+#
+P
+o =
+hF Pr hF | o · c(o,hF ) ⊗ e hF ,
+where e hF is the one-hot vector over follower histories and
+⊗ denotes the Kronecker product. This decomposition re∗
+veals that if uniform continuity of vL
+can be established on
+conditional components c(o,hF ) , then it extends—by convexity—to all occupancy states o, and thus to all credible sets
+
+x ∈ X. This structural insight will later enable sample-based
+∗
+approximation methods to reliably estimate vL
+.
+Lemma 4.3 (Proof in Appendix E). If we let πL ∈ ΠL be
+a fixed leader policy, then there exist finite sets F0 , . . . , Fℓ
+of linear function pairs (αL , αF ), each defined over conditional occupancy states, such that the leader value function
+πL ,∗
+vL
+: X → R under policy πL satisfies: for any credible
+set x at stage t,
+πL ,∗
+Ft
+vL
+(x) = max{vL
+(o) | vFFt (o) = max
+vFFt (o′ )}
+′
+o∈x
+
+o ∈x
+
+where the leader and follower value functions over occupancy states are defined via convex combinations of linear
+evaluations over conditional occupancy states: ∀i ∈ {L, F },
+X
+viFt (o) = νi (o) +
+Pr(hF |o)
+max
+αi (c(o,hF ) ),
+hF
+
+α∈F̄t (c(o,hF ) )
+
+.
+′
+where F̄t (c) = {α ∈ Ft | αF (c) = maxα′ ∈Ft αF
+(c)}.
+The structural property characterising the leader value
+function under any fixed leader policy also holds for the
+optimal leader value function.
+Theorem 4.4 (Proof in Appendix G). The optimal leader
+∗
+value function vL
+: X → R solution of Bellman’s optimality
+equations (Theorem 4.1) is uniformly continuous across credible sets viz. There exist collections L0 , . . . , Lℓ of finite sets
+F of value vectors (αL , αF ) linear across conditional occu∗
+F
+pancy states at stage t: vL
+: x 7→ maxF∈Lt vL
+(x) where
+F
+F
+vL
+: x 7→ max{vL
+(o) | vFF (o) = max
+vFF (o′ )}.
+′
+o∈x
+
+o ∈x
+
+The structural property that holds across leader value functions also holds across leader action-value functions.
+Corollary 4.5. The optimal leader action-value function
+∗
+qL
+: X × ΣL → R is uniformly continuous across credible
+sets and leader decision rules viz. There exists a collection
+L0 , . . . , Lℓ of finite sets F of value vectors (αL , αF ) linear
+across conditional occupancy states at stage t such that: for
+any credible set x ∈ X at stage t ∈ {0, . . . , ℓ − 1},
+∗
+F
+qL
+(x, σL ) = maxF∈Lt+1 qL
+(x, σL )
+F
+F
+qL
+(x, σL ) = maxo∈x {qL
+(o, σL ) | qFF (o, σL ) = maxo′∈x qFF (o′, σL )}
+P
+qiF (o, σL ) = νi (o) + hF ,zF Pr(hF | o) · qiF (c(o,hF ) , σL , zF )
+.
+qiF (c, σL , zF ) =
+max
+αi (τ̃zF (c, σL , aF )))
+α∈F̄(τ̃zF (c,σL ,aF ))
+aF ∈AF
+
+.
+′
+where F̄(c) = {α ∈ F | αF (c) = maxα′ ∈F αF
+(c)}.
+Uniform continuity guarantees that small perturbations in
+occupancy states lead to small changes in value, a prereq∗
+uisite for approximating vL
+using a finite set of representa∗
+tive credible sets. To approximate optimal value function vL
+,
+we introduce a point-based value iteration (PBVI) scheme
+(Pineau et al. 2003; Peralez et al. 2024, 2025).
+
+5
+
+Point-Based Value Iteration
+
+This section describes how the point-based value iteration
+(PBVI) algorithm (Pineau et al. 2003) is adapted to solve M
+
+
+via its reduction M′ . The algorithm alternates between three
+phrases: expansion of credible sets alongside with (conditional) occupancy states, improvement of leader value function, and pruning to control complexity.
+Algorithm 1: Point-Based Value Iteration (PBVI) for M′
+1: function PBVI()
+2: Initialise X0′ , . . . , Xℓ′ ← ∅ and L0 , . . . , Lℓ ← ∅
+3: while not converged do
+4:
+for t = ℓ − 1 to 0 do
+5:
+Perform improve(Xt′ , Lt+1 )
+6:
+end for
+7:
+for t = 0 to ℓ − 1 do
+′
+8:
+Sampling expand(Xt′ , Xt+1
+)
+9:
+end for
+10: end while
+
+The expansion phase (see Algorithm 2) samples a finite
+set X ′ ⊂ X of representative credible sets through forward
+simulations. Starting with the initial belief b, each credible set
+x ∈ X ′ is expanded by selecting leader decisions σL ∈ ΣL ,
+and populating occupancy states in T (x, σL ) by sampling the
+corresponding follower response σF ∈ ΣF starting in an occupancy state o ∈ x, and applying the transition τ (o, σL , σF )
+to generate new occupancy states. Newly reached occupancy
+states are retained only if their ℓ1 -distance from the current
+credible set exceeds a fixed threshold, ensuring coverage. We
+.
+also record collections Cx = {c(o,hF ) | o ∈ x, hF ∈ HF }
+.
+and Co = {c(o,hF ) | hF ∈ HF } of conditional occupancy
+states induced by each credible set x ∈ X ′ and occupancy
+state o ∈ x, respectively.
+Algorithm 2: The expand phase for PBVI in M′
+1: function expand(X ′ , Y )
+2: for each x ∈ X ′ do
+3:
+Initialise credible set y ← ∅ and set Cy ← ∅
+4:
+Sample leader decision rule σL ∈ ΣL
+5:
+for each occupancy state o ∈ x do
+6:
+Initialise σF ← ∅
+7:
+for each hF ∈ HF reachable from o do
+8:
+Sample σF (hF ) ∼ uniform(AF )
+9:
+for each zF ∈ ZF do
+10:
+Compute c ← τzF (c(o,hF ) , σL , σF (hF ))
+11:
+if Cy = ∅ or maxc′ ∈Cy ∥c′ − c∥1 > ε then
+12:
+refCount(σF ) ← refCount(σF ) + 1
+13:
+Cy ← Cy ∪ {c}
+14:
+end if
+15:
+end for
+16:
+end for
+17:
+if refCount(σF ) > 0 then
+18:
+y ← y ∪ {τ (o, σF , σL )}
+19:
+end if
+20:
+end for
+21:
+Y ← Y ∪ {y}
+22: end for
+
+The improvement phase (see Algorithm 3) computes,
+
+through point-based backups and mixed-integer linear programming, a finite set Fx of value vectors (αL , αF ) linear
+over conditional occupancy states for every credible sample
+.
+set x ∈ X ′ . The collection L = {Fx | x ∈ X ′ } induces
+leader value function vL which approximates optimal leader
+∗
+value function vL
+.
+Algorithm 3: The improve phase for PBVI in M′
+1: function improve(Xt′ , Lt+1 )
+2: for each credible set x ∈ Xt′ do
+3:
+Greedy decision rule σL,x ← MILP(x, Lt+1 )
+4:
+Improvement rule Lt ← Lt ∪ {Fx,σL,x }
+5: end for
+
+Theorem 5.1 (Proof in Appendix H). If we let Lt+1 be a
+collection that approximates optimal leader value function
+∗
+∗
+vL
+at stage t + 1, then the greedy leader decision rule σL
+at
+x at stage t is solution of mixed-integer linear program:
+arg max
+
+max
+
+σL ∈ΣL o∈x,F∈Lt+1
+
+F
+qL
+(o, σL ),
+
+subject to : qFF (o, σL ) ≥ qFF (o′, σL ), ∀o′ ∈ x
+P
+F
+F
+qL
+(o, σL ) = νL (o) + hF ,zF Pr(hF | o) · qL
+(c(o,hF ) , σL , zF )
+P
+qFF (o′, σL ) = νF (o′) + hF ,zF Pr(hF | o′) · qFF (c(o′,hF ) , σL , zF ),
+∀o′ ∈ x
+F
+α∈F wF (c, zF , α) = 1, ∀c ∈ Cx , zF ∈ ZF
+
+P
+
+qFF (c, σL , zF ) ≥ αF (τ̃zF (c, σL , aF )),
+∀c ∈ Cx , aF ∈ AF , zF ∈ ZF , α ∈ F
+qFF (c, σL , zF ) ≤ αF (τ̃zF (c, σL , aF )) + M · (1 − wFF (c, zF , α)),
+∀c ∈ Cx , aF ∈ AF , zF ∈ ZF , α ∈ F
+F
+qL
+(c, σL , zF ) ≥ αL (τ̃zF (c, σL , aF )) − M · (1 − wFF (c, zF , α)),
+∀c ∈ Co , aF ∈ AF , zF ∈ ZF , α ∈ F
+F
+qL
+(c, σL , zF ) ≤ αL (τ̃zF (c, σL , aF )) + M · (1 − wFF (c, zF , α)),
+∀c ∈ Co , aF ∈ AF , zF ∈ ZF , α ∈ F
+
+where M is a large number and wFF (c, zF , αF ) are boolean
+variables, all other variables induced by action-value funcF F
+tions qL
+, qF and leader decision rule σL are free.
+For each credible set x ∈ X ′ , the greedy leader decision rule is extracted from the solution of the mixedinteger linear program in Theorem 5.1 as follows σL,x ∈
+F
+arg maxσL ∈ΣL maxo∈x,F∈Lt+1 qL
+(o, σL ). Once σL,x has
+been computed for each credible set x, we now can updated
+the collection Lt with the set Fx,σL,x computing induced by
+credible set x and leader decision rule σL,x .
+Corollary 5.2. Let vL denote the current leader value function at stage t, represented by the collection Lt . Let x ∈ X ′
+be a credible set, and let σL,x be the solution to the mixedinteger linear programme in Theorem 5.1 at credible set x.
+′
+Define the updated leader value function vL
+at stage t by augmenting Lt with a new set F of value vectors (αL,(c) , αF ,(c) ),
+
+
+each linear over conditional occupancy states c ∈ Cx , where:
+. P
+α(c) = zF arg maxαaz F : aF ∈AF , α∈F αzaFF (c),
+F
+P
+P
+αzaFF (s, hL ) = aL ,zL σL,x (aL |hL ) s′ p(s′ , zL , zF |s, aL , aF )
+P
+F
+′
+α∈F wF (c, zF , α) · α(s , hL aL zL ), ∀s, hL .
+′
+Then the updated value function satisfies vL
+(x) ≥ vL (x)
+′
+for all credible sets x ∈ X ′ , and vL
+(x) > vL (x) for at
+least one such x whenever the greedy update yields a strict
+improvement.
+This point-based update procedure is repeated until convergence or computational resources are exhausted. To further
+improve scalability, we incorporate two pruning strategies.
+The first (Algorithm 4) eliminates dominated sets of value
+vectors. The second (Algorithm 5) removes uncredible sets.
+Both procedures introduce approximation error, but yield
+significant computational savings.
+
+Algorithm 4: Bounded Set Pruning
+1: function BoundedPruning(L, X ′ )
+2: for each F ∈ L do
+3:
+refCount(F) ← 0
+4: end for
+5: for each x ∈ X ′ do
+F
+6:
+Fx ← argmaxF∈L vL
+(x)
+7:
+refCount(Fx ) ← refCount(Fx ) + 1
+8: end for
+9: return {F ∈ L | refCount(F) > 0}
+
+Algorithm 5: Pruning Uncredible Sets
+1: function PruneUncredibleSets(L, X ′ , ϵ)
+2: Initialise X ◦ ← ∅
+3: for each x ∈ X ′ do
+F
+(x)
+4:
+Fx ← argmaxF∈L vL
+5: end for
+6: for each x ∈ X ′ do
+7:
+isRedundant ← false
+8:
+for each x′ ∈ X ◦ do
+F
+Fx
+9:
+if vL
+(x) − vL x′ (x) ≤ ϵ then
+10:
+isRedundant ← true; break
+11:
+end if
+12:
+end for
+13:
+if ¬isRedundant then
+14:
+X ◦ ← X ◦ ∪ {x}
+15:
+end if
+16: end for
+17: return X ◦
+
+To analyse the approximation quality of point-based value
+iteration (PBVI) in the credible MDP M′ , we define a samplebased approximation of the optimal leader value function over
+a finite set X ′ ⊂ X of sampled credible sets. Let L0 , . . . , Lℓ
+be the collections of approximate value vectors constructed
+via Theorem 5.1, inducing an approximate leader value function vL : X → R, generalised to arbitrary credible sets x ∈ X
+
+via nearest-neighbour evaluation:
+.
+vL (x) = vL (x′ ) where x′ = arg min
+dH (x, x′ ).
+′
+′
+x ∈X
+
+The distance dH (x, x̄) denotes the Hausdorff distance between finite subsets x, x̄ ⊆ O of occupancy states:
+#
+#
+.
+dH (x, x̄) = max sup inf ∥o − ō∥1 , sup inf ∥ō − o∥1 .
+o∈x ō∈x̄
+
+ō∈x̄ o∈x
+
+∗
+Let vL
+:X
+
+→ R be the optimal leader value function de.
+fined in Theorem 4.1, and let m = max{∥rL ∥∞ , ∥rF ∥∞ }
+denote a uniform bound on instantaneous payoffs. By Propo∗
+sition F.4, the mapping x 7→ vL
+(x) is uniformly continuous
+with respect to dH . We now express the worst-case approximation error incurred by nearest-neighbour PBVI in terms of
+the sampling resolution:
+.
+Theorem 5.3 (Proof in Appendix I). Let δ
+=
+′
+supx∈X minx′ ∈X ′ dH (x, x ) be the Hausdorff covering radius of the PBVI sample set X ′ . Then the exploitability ε of
+the leader policy returned by PBVI satisfies:
+ε ≤ mℓδ.
+
+6
+
+Experimental Validation
+7 Conclusion
+References
+
+An, B.; Kempe, D.; Kiekintveld, C.; Shieh, E.; Singh, S.;
+Tambe, M.; and Vorobeychik, Y. 2012. Security Games with
+Limited Surveillance. In Hoffmann, J.; and Selman, B., eds.,
+AAAI, 1241–1248.
+Basilico, N.; Coniglio, S.; and Gatti, N. 2016. Methods for
+Finding Leader-Follower Equilibria with Multiple Followers: (Extended Abstract). In Jonker, C. M.; Marsella, S.;
+Thangarajah, J.; and Tuyls, K., eds., AAMAS, 1363–1364.
+ACM.
+Basilico, N.; Nittis, G. D.; and Gatti, N. 2016. A Security
+Game Combining Patrolling and Alarm-Triggered Responses
+Under Spatial and Detection Uncertainties. In Schuurmans,
+D.; and Wellman, M. P., eds., AAAI, 404–410. AAAI Press.
+Bellman, R. E. 1957. Dynamic Programming. Dover Publications, Incorporated.
+Breton, M.; Alj, M.; and Haurie, A. 1988. Sequential Stackelberg equilibria in two-person games. Journal of Optimization
+Theory and Applications, 58(2): 197–217.
+Chung, T. H.; Hollinger, G. A.; and Isler, V. 2011. Search and
+pursuit-evasion in mobile robotics: A survey. Autonomous
+Robots, 31: 299–316.
+Conitzer, V.; and Sandholm, T. 2006. Computing the Optimal
+Strategy to Commit to. In Proceedings of the 7th ACM
+Conference on Electronic Commerce, 82–90. ACM.
+Denardo, E. W. 1967. Contraction Mappings in the Theory
+Underlying Dynamic Programming. SIAM Review, 9(2):
+165–177.
+Dibangoye, J. S.; Amato, C.; Buffet, O.; and Charpillet, F.
+2013. Optimally Solving Dec-POMDPs as Continuous-State
+MDPs. In IJCAI, 90–96.
+
+
+Dibangoye, J. S.; Amato, C.; Buffet, O.; and Charpillet, F.
+2016. Optimally Solving dec-POMDPs as Continuous-State
+MDPs. JAIR, 55.
+Horák, K.; and Bošanskỳ, B. 2019. Solving Partially Observable Stochastic Games with Public Observations. In AAAI.
+Horák, K.; Bosanský, B.; Kovar1́k, V.; and Kiekintveld,
+C. 2023. Solving zero-sum one-sided partially observable
+stochastic games. Artif. Intell., 316: 103838.
+Kiekintveld, C.; Jain, M.; Tsai, J.; Pita, J.; Ordonez, F.; and
+Tambe, M. 2011. Computing Optimal Randomized Resource
+Allocations for Massive Security Games. JAAMAS, 22(3):
+605–633.
+Kreps, D. M. 2020. A course in microeconomic theory.
+Princeton university press.
+Leitmann, G. 1978. On generalized Stackelberg strategies.
+Journal of Optimization Theory and Applications, 26(4): 637–
+643.
+Letchford, J.; and Conitzer, V. 2010. Computing Optimal
+Strategies to Commit to in Extensive-Form Games. In
+Proceedings of the 11th International Conference on Autonomous Agents and Multiagent Systems, 985–992. IFAAMAS.
+López, V. B.; Della Vecchia, E.; Jean-Marie, A.; and Ordoñez,
+F. 2022. Stationary Strong Stackelberg Equilibrium in Discounted Stochastic Games. IEEE Transactions on Automatic
+Control.
+Lye, K. W.; and Wing, J. M. 2005. Game Strategies in Network Security. In Proceedings of the International Workshop
+on Detection of Intrusions and Malware, and Vulnerability Assessment, volume 3548 of Lecture Notes in Computer
+Science, 1–20. Berlin, Heidelberg: Springer.
+Paruchuri, P.; Pearce, J. P.; Tambe, M.; Ordonez, F.; and
+Kraus, S. 2008. Playing Games for Security: An Efficient
+Exact Algorithm for Solving Bayesian Stackelberg Games.
+In AAMAS, 895–902. IFAAMAS.
+Peralez, J.; Delage, A.; Buffet, O.; and Dibangoye, J. S. 2024.
+Solving Hierarchical Information-Sharing dec-POMDPs: An
+Extensive-Form Game Approach. In ICML.
+Peralez, J.; Delage, A.; Castellini, J.; Cunha, R. F.; and Dibangoye, J. S. 2025. Optimally Solving Simultaneous-Move
+dec-POMDPs: The Sequential Central Planning Approach.
+AAAI, 38(8): 9411–9419.
+Pineau, J.; Gordon, G.; Thrun, S.; et al. 2003. Point-based
+value iteration: An anytime algorithm for POMDPs. In IJCAI,
+volume 3, 1025–1032.
+Puterman, M. L. 1994. Markov Decision Processes: Discrete
+Stochastic Dynamic Programming. New York: John Wiley &
+Sons. ISBN 978-0-471-61977-2.
+Rosenthal, R. W. 1981. Games of perfect information, predatory pricing and the chain-store paradox. Journal of Economic theory, 25(1): 92–100.
+Sanjari, S.; Başar, T.; and Yüksel, S. 2023. Isomorphism
+Properties of Optimality and Equilibrium Solutions under
+Equivalent Information Structure Transformations: Stochastic Dynamic Games and Teams. SIAM Journal on Control
+and Optimization, 61(5): 3102–3130.
+
+von Stackelberg, H. 1934. Marktform und Gleichgewicht.
+Vienna: Springer.
+Vorobeychik, Y.; An, B.; Tambe, M.; and Singh, S. 2014.
+Computing solutions in infinite-horizon discounted adversarial patrolling games. In AAMAS, 314–322. AAAI Press.
+Vorobeychik, Y.; and Singh, S. 2012. Computing Stackelberg equilibria in discounted stochastic games. In AAAI,
+1478–1484. AAAI Press.
+Whitt, W. 1980. Representation and Approximation of Noncooperative Sequential Games. SIAM Journal on Control
+and Optimization, 18(1): 33–48.
+Yin, Z.; Jiang, A. X.; Tambe, M.; Kiekintveld, C.; LeytonBrown, K.; Sandholm, T.; and Sullivan, J. P. 2012. TRUSTS:
+Scheduling Randomized Patrols for Fare Inspection in Transit
+Systems Using Game Theory. AI Magazine, 33(4): 59.
+
+
+A
+
+The Centipede Game
+
+Example 1. In the centipede game (Figure 1), two players alternate between continue (C)—passing play—and take
+(T)—terminating the game and claiming the larger share of a growing pot while the opponent receives the smaller share
+(Rosenthal 1981). Each state si leads deterministically to either terminal state s̄t (if T) or transient next state st+1 (if C). The
+terminal payoffs are s̄1 7→ (1, 0), s̄2 7→ (0, 2), s̄3 7→ (3, 1), s̄4 7→ (2, 4), s̄5 7→ (3, 3).
+Under policy commitment, the leader first commits a rule at s1 , s3 ; then the follower commits at s2 , s4 . Only state labels
+are revealed during play—never the follower’s actual C/T choice. Consequently, the leader at s1 does not know which rule the
+follower will use at s2 . A naive dynamic programming computation (which assumes full information) proceeds as follows: At
+s4 , the follower takes (2, 4). At s3 , the leader assumes the follower will take at s4 , so comparing take (3) vs. continue (2), the
+leader takes. At s2 , the follower, anticipating leader’s take at s3 , prefers take (2) over continue (1). At s1 , the leader assumes the
+follower at s2 will take, so continuing yields 0 and taking yields 1; the leader takes.
+In fact, by committing at s3 to take with probability η, the leader induces the follower at s2 to continue whenever
+(1 − η) · 4 + η · 1 > 2
+
+η < 23 .
+
+⇐⇒
+
+For any η < 23 , the follower continues at s2 , making the leader’s expected payoff from “continue” at s1 :
+(1 − η) · 2 + p · 3 = 2 + η > 1 .
+Thus the Stackelberg-optimal commitment is to continue at s1 and randomize at s3 with η < 23 , yielding payoff > 1. Since the
+leader at s1 cannot observe the follower’s rule at s2 , any backward step that treats the follower’s move as known miscomputes
+the continuation value.
+s1
+
+s2
+
+C
+
+T
+
+s̄0
+
+s3
+
+C
+
+T
+
+s̄2
+1, 0
+
+T
+
+s̄3
+0, 2
+
+s4
+
+C
+
+C
+
+T
+
+s̄5
+
+3, 3
+
+s̄4
+3, 1
+
+2, 4
+
+Figure 1: Centipede game. The leader acts at s1 and s3 ; the follower acts at s2 and s4 . Each terminal state s̄t shows (leader
+payoff, follower payoff).
+
+B
+
+Proof of Theorem 3.1
+
+.
+Proof. We begin by proving the one-to-one correspondence between policies in M and M′ . Let πi′ = (σi,0 , . . . , σi,ℓ−1 ) denote
+.
+′
+the policy of player i in M , and let πi = (πi,0 , . . . , πi,ℓ−1 ) denote the corresponding policy of player i in M. Then, for each
+stage t ∈ {0, . . . , ℓ − 1}, there exists a bijective mapping πi,t 7→ σi,t , which establishes a one-to-one policy correspondence
+′ .
+between M and M′ . We now proceed to establish value equivalence. Let πL
+= (σL,0 , . . . , σL,ℓ−1 ) be a leader policy in M′ . The
+value of this policy from the initial credible set x0 is:
+.
+π ′ ,∗
+vML′ ,L,0 (x0 ) = R(xℓ ),
+
+where x(b,πL′ ) = xℓ .
+
+Replacing the terminal reward R(xℓ ) with its definition yields:
+#
+= max νL (o) {νF (o) ≥ νF (o′ ) | ∀o′ ∈ xℓ }, ∀o ∈ xℓ .
+Here, o and o′ denote occupancy states induced by follower policies πF′ and πF′′ , respectively, combined with the leader policy
+′
+πL
+. Invoking the following equivalence, valid for any player i ∈ {L, F },
+hP
+i
+ℓ−1
+′
+′
+νi (o(b,πL′ ,πF′ ) ) = E
+r
+(s
+,
+a
+,
+a
+)
+o
+i
+t
+L,t
+F
+,t
+(b,πL ,πF )
+t=0
+. πL′ ,πF′
+= vM,i,0
+(b),
+we obtain the equivalent form:
+′
+′′
+′
+′
+# πL′ ,πF′
+,πF
+πL
+,πF
+πL
+π ′ ,∗
+′′
+(b) vM,F
+vML′ ,L,0 (x0 ) = max vM,L,0
+,0 (b) ≥ vM,F ,0 (b), ∀πF
+′
+. πL ,∗
+= vM,L,0
+(b).
+
+This confirms the value equivalence between M′ and M. Finally, since decision rules in both models are defined over the same
+private action–observation histories, the reduction preserves the information structure. Therefore, M′ constitutes a lossless
+reduction of M.
+
+
+C
+
+Proof of Theorem 4.1
+
+Proof. The result follows by backward induction for Markov decision processes (Puterman 1994). We begin with the definition:
+for any transient credible set x at stage t,
+.
+πL ,∗
+∗
+vL
+(x) = maxπL ∈ΠL vL
+(x).
+By decomposing πL as (πL,t , . . . , πL,ℓ−1 ), we obtain the following expression:
+∗
+vL
+(x) =
+
+max
+
+πL,t ∈ΠL,t
+
+···
+
+max
+
+πL,ℓ−1 ∈ΠL,ℓ−1
+
+πL ,∗
+vL
+(x).
+
+′ .
+Since the policy tail πL
+= (πL,t+1 , . . . , πL,ℓ−1 ) applies to the next credible set T (x, πL,t ) reached by executing decision rule
+πL,t at x, we obtain:
+∗
+vL
+(x) =
+
+max
+
+max
+
+′ ∈Π
+πL,t ∈ΠL,t πL
+L,t+1:ℓ−1
+
+π ′ ,∗
+
+vLL (T (x, πL,t )).
+
+Injecting the definition of the optimal value function yields:
+∗
+vL
+(x) =
+
+max
+
+πL,t ∈ΠL,t
+
+∗
+∗
+∗
+vL
+(T (x, πL,t )) = max vL
+(T (x, σL )) = max qL
+(x, σL ).
+σL ∈ΣL
+
+σL ∈ΣL
+
+This concludes the proof.
+
+D
+
+Proof of Lemma 4.2
+
+.
+The proof starts with the definition of conditional occupancy states c′ = τzF (c, σL , aF ) given by : for any hidden state s′ ∈ S
+and leader action-observation history hF aF zF ,
+.
+c′ (s′ , hL aL zL ) = Pr(s′ , hL , aL , zL | b, πL , hF , aF , zF )
+Pr(s′ , hL , aL , zL , b, πL , hF , aF , zF )
+=
+Pr(b, πL , hF , aF , zF )
+P
+Pr(s,
+s′ , hL , aL , zL , b, πL , hF , aF , zF )
+= s
+Pr(b, πL , hF , aF , zF )
+P
+′
+Pr(s , zL , zF | s, aL , aF ) · Pr(aL | πL , hL ) · Pr(s, hL | b, πL , hF ) · Pr(b, πL , hF , aF )
+= s
+Pr(b, πL , hF , aF , zF )
+P
+′
+p(s , zL , zF | s, aL , aF ) · πL (aL | hL ) · c(s, hL )
+= s
+Pr(b,π ,h ,a ,z )
+L
+
+F
+
+F
+
+F
+
+Pr(b,πL ,hF ,aF )
+′
+s p(s , zL , zF | s, aL , aF ) · πL (aL | hL ) · c(s, hL )
+
+P
+=
+
+Pr(zF | b, πL , hF , aF )
+. P
+where the normalising factor Pr(zF | b, πL , hF , aF ) = s,s′ ,hL aL zL p(s′ , zL , zF | s, aL , aF ) · πL (aL | hL ) · c(s, hL ) denoted
+ηzF (c, σL , aF ). Which ends the proof.
+
+E
+
+Proof of Lemma 4.3
+
+Proof. The proof starts with the definition of the optimal leader value function under a fixed leader policy πL at any stage
+t ∈ {0, . . . , ℓ − 1}. For any arbitrary credible set x ∈ X, we have that:
+.
+πL ,∗
+vL,t
+(x) = R(T (T (. . . (T (x, πL,t ), πL,t+1 ) . . .), πL,ℓ−1 )).
+(1)
+Injecting definition R : x 7→ max{νL (o) | {νF (o) ≥ νF (o′ ), ∀o′ ∈ x}, ∀o ∈ x} into expression (1) yields the following:
+= max{νL (o) | {νF (o) ≥ νF (o′ ), ∀o′ ∈ T (x, πL,t ), πL,t+1 ) . . .), πL,ℓ−1 )}, ∀o ∈ T (x, πL,t ), πL,t+1 ) . . .), πL,ℓ−1 )}. (2)
+.
+Base case. If we let Fℓ = {(αL , αF )} be a singleton with null functions (αL : · 7→ 0, αF : · 7→ 0), then the optimal leader
+πL ,∗
+value function under a fixed leader policy πL , denoted vL,ℓ
+: X → R, at the last stage ℓ satisfies the statement:
+πL ,∗
+Fℓ
+vL,ℓ
+(x) = max{vL
+(o) | {vFFℓ (o) ≥ vFFℓ (o′ ), ∀o′ ∈ x}, ∀o ∈ x}
+X
+viFℓ (o) − νi (o) = 0 =
+Pr(hF |o)
+max
+αi (c(o,hF ) )
+hF
+
+.
+′
+where F̄ℓ (c) = {α ∈ Fℓ | αF (c) = maxα′ ∈F αF
+(c)}.
+
+α∈F̄ℓ (c(o,hF ) )
+
+(3)
+(4)
+
+
+Inductive step. Assume that the statement holds for stage t + 1, i.e., there exists a collection Ft+1 of functions (αL , αF )
+πL ,∗
+such that the optimal leader value function under a fixed leader policy πL , denoted vL,t+1
+: X → R, at stage t + 1 satisfies the
+following: for any arbitrary credible set x,
+F
+
+F
+
+F
+
+πL ,∗
+vL,t+1
+(x) = max{vL t+1 (o) | {vF t+1 (o) ≥ vF t+1 (o′ ), ∀o′ ∈ x}, ∀o ∈ x}.
+X
+F
+vi t+1 (o) = νi (o) +
+Pr(hF |o)
+max
+αi (c(o,hF ) )
+hF
+
+α∈F̄t+1 (c(o,hF ) )
+
+(5)
+(6)
+
+.
+′
+where F̄t+1 (c) = {α ∈ Ft+1 | αF (c) = maxα′ ∈F αF
+(c)}.
+πL ,∗
+Using Bellman’s equations, we know that the optimal leader value function under a fixed leader policy πL , denoted vL,t
+:X→
+R, at stage t can be expressed as a function of the optimal leader value function under a fixed leader policy πL , denoted
+πL ,∗
+vL,t+1
+: X → R, at stage t + 1: for any arbitrary credible set x,
+πL ,∗
+πL ,∗
+vL,t
+(x) = vL,t+1
+(T (x, πL,t )).
+
+(7)
+
+The injection of expressions (5–6) into expression (7) leads us to the following expression:
+F
+
+F
+
+F
+
+πL ,∗
+vL,t
+(x) = max{vL t+1 (ō) | {vF t+1 (ō) ≥ vF t+1 (ō′ ), ∀ō′ ∈ T (x, πL,t )}, ∀ō ∈ T (x, πL,t )}.
+
+(8)
+
+.
+.
+Here, ō = τ (o, πL,t , πF ,t ) and ō′ = τ (o′ , πL,t , πF′ ,t ) denote occupancy states induced by occupancy states o and o′ , the follower
+′
+decision rules πF ,t and πF ,t , respectively, combined with the leader decision rule πL,t . That is,
+F
+
+F
+
+F
+
+= max{vL t+1 (τ (o, πL,t , πF ,t )) | {vF t+1 (τ (o, πL,t , πF ,t )) ≥ vF t+1 (τ (o′ , πL,t , πF′ ,t )), ∀o′ ∈ x, ∀πF′ ,t }, ∀o ∈ x, ∀πF ,t }. (9)
+To unveil the target structure we will look at each key components in expression (9), including: τ (o, σL , σF ), νF (τ (o, πL,t , πF ,t )),
+F
+and vF t+1 (τ (o, πL,t , πF ,t )). If we let τ̃zF ,t+1 (ct , πL,t , aF ,t ) be the weighted conditional occupancy state τzF ,t+1 (ct , πL,t , aF ,t )
+upon receiving follower zF ,t+1 after taking leader decision rule πL,t and follower action aF ,t in conditional occupancy state ct ,
+then occupancy state can be rewritten as follows:
+X
+X
+τ (o, σL , σF ) =
+Pr(hF | o)
+Pr(zF | c(o,hF ) , σL , aF ) · τzF (c(o,hF ) , πL , aF ) ⊗ e hF aF zF .
+(10)
+=
+
+hF
+
+zF
+
+X
+
+X
+
+hF
+
+Pr(hF | o)
+
+τ̃zF (c(o,hF ) , σL , aF ) ⊗ e hF aF zF .
+
+(11)
+
+zF
+
+The convex decomposition of occupancy states is useful to compute the continuation value for each conditional occupancy states
+independently. Unfortunately, it is not clear how to use this decomposition for the value so far νi (τ (o, σL , σF )). The injection of
+expression (11) into (6) yields the following:
+X
+X
+F
+vi t+1 (τ (o, σL , σF )) = νi (τ (o, σL , σF )) +
+Pr(hF | o)
+max
+αi (c(o,hF ) )
+(12)
+hF
+
+zF
+
+α∈F̄t+1 (c(o,hF ) )
+
+.
+′
+where
+= P {αP ∈
+Ft+1
+|
+αF (c)
+=
+maxα′ ∈F αF
+(c)}. If we let ρi : (c, σL , aF )
+7→
+P P F̄t+1 (c)
+be
+the
+immediate
+expected
+payoff
+of
+player
+i
+after
+executσ
+(a
+|h
+)
+o(s,
+h
+,
+h
+)
+·
+r
+(s,
+a
+,
+a
+)
+L
+L
+L
+L
+F
+i
+L
+F
+hL
+aL
+hF
+s
+ing leader-follower decision rules σL and aF at conditional occupancy state c, then the expected cumulative payoff so far can be
+rewritten as follows:
+. Pt
+νi (τ (o, σL , σF )) = E[ t′ =0 ri (st′ , aL,t′ , aF ,t′ ) | o, σL , σF ]
+(13)
+Pt−1
+= E[ t′ =0 ri (st′ , aL,t′ , aF ,t′ ) | o] + E[ri (s, aL , aF ) | o, σL , σF ]
+(14)
+Pt−1
+P
+= E[ t′ =0 ri (st′ , aL,t′ , aF ,t′ ) | o] + hF Pr(hF | o)E[ri (s, aL , aF ) | c(o,hF ) , σL , aF = σF (hF )] (15)
+P
+= νi (o) + hF Pr(hF | o) · ρi (c(o,hF ) , σL , σF (hF )).
+(16)
+To make explicit the linear transformations in (12) and (16), we shall
+P use vector (respectively matrix) representations for
+operators ρi (·, σL , aF ) and τ̃zF (·, σL , aF ). Vectors riσL ,aF : (s, hL ) 7→ aL σL (aL | hL ) · ri (s, aL , aF ) denotes the immediate
+expected payoff of player i if the leader takes decision rule σL while the follower takes action aF starting in any state s and
+leader history hL such that ρi (c, σL , aF ) is the inner product of c and riσL ,aF for any conditional occupancy state c. Moreover,
+operator τ̃zF (·, σL , aF ) transforms any conditional occupancy state at stage t to an conditional occupancy state at stage t + 1,
+that is τ̃zF (·, σL , aF ) describes the transition matrix PzσFL aF : (s, hL | s′ , hL aL zL ) 7→ p(s′ , zL , zF | s, aL , aF ) · σL (aL | hL )
+
+
+such that PzσFL aF (c) = τ̃zF (c, σL , aF ) for any conditional occupancy state c. With the linear transformations as a background,
+one can rewritten expression (12) as follows:
+F
+
+vi t+1 (τ (o, σL , σF ))
+"
+= νi (o) +
+
+X
+
+#
+X
+
+Pr(hF | o) ρi (c(o,hF ) , σL , σF (hF )) +
+
+zF
+
+hF
+
+αi (PzσFL σF (hF ) (c(o,hF ) ))
+
+max
+σ
+
+σ
+
+α∈F̄t+1 (PzFL F
+
+(hF )
+(c
+
+(17)
+
+(o,hF ) ))
+
+.
+′
+where F̄t+1 (c) = {α ∈| αF (c) = maxα′ ∈Ft+1 αF
+(c)}. If we let (PzσFL aF )⊤ be the transpose matrix of PzσFL aF , then we know
+.
+aF
+σL aF
+σL aF ⊤
+that αi (PzF (c(o,hF ) )) = ((PzF ) αi )(c(o,hF ) ). As a consequence, if we let FzσFL,t+1
+= {((PzσFL aF )⊤ αL , (PzσFL aF )⊤ αF ) |
+∀aF , ∀zF , ∀(αL , αF ) ∈ Ft+1 }, then it follows that:
+
+
+X
+X
+Ft+1
+vi
+(τ (o, σL , σF )) = νi (o) +
+Pr(hF | o) ρi (c(o,hF ) , σL , σF (hF )) +
+max
+αi (c(o,hF ) ) . (18)
+σ
+
+σ
+
+(h
+
+)
+
+L F
+F (c
+(o,hF ) )
+zF α∈F̄zF ,t+1
+
+hF
+
+L
+σL aF . L
+aF
+= zF ∈ZF FzσFL,t+1
+where
+is a direct sum of vector spaces, then it follows that:
+Next, if we let Ft+1
+"
+#
+X
+Ft+1
+αi (c(o,hF ) ) .
+vi
+(τ (o, σL , σF )) = νi (o) +
+Pr(hF | o) ρi (c(o,hF ) , σL , σF (hF )) +
+max
+σ
+
+σ
+
+L F
+α∈F̄t+1
+
+hF
+
+(hF )
+(c
+
+(19)
+
+(o,hF ) )
+
+aF
+σL aF
+Expression (19) holds since {FzσFL,t+1
+}zF ∈ZF are independent collections and vector pairs α̃ ∈ Ft+1
+are additive, i.e.,
+P
+σL aF
+α̃ = zF αzF where αzF ∈ FzF ,t+1 . Similarly, one can rewrite expression (16) as follows:
+
+νi (τ (o, σL , σF )) = νi (o) +
+
+σL ,σF (hF )
+(c(o,hF ) ).
+hF Pr(hF | o) · ri
+
+P
+
+.
+σL ,aF
+σL aF
+If we let FtσL aF = {(rL
+, rFσL ,aF )} ⊕ Ft+1
+, then taking (19) and (20) altogether yield:
+X
+F
+vi t+1 (τ (o, σL , σF )) = νi (o) +
+Pr(hF | o)
+max
+αF (c(o,hF ) ).
+σ
+
+hF
+
+σ
+
+α∈F̄t L F
+
+(hF )
+(c
+
+(21)
+
+(o,hF ) )
+
+. S
+Finally, if we let Ft = aF ∈AF FtσL aF , then it follows that: for any occupancy state o at stage t,
+X
+viFt (o) = νi (o) +
+Pr(hF | o)
+max
+αi (c(o,hF ) ).
+hF
+
+(20)
+
+α∈F̄t (c(o,hF ) )
+
+(22)
+
+Which proves the statement also holds at stage t. As a consequence, the statement holds for any arbitrary stage.
+
+F
+
+Uniform Continuity of the Value Function over Credible Sets
+
+We establish the uniform continuity of the leader’s value function over finite credible sets. For clarity, we decompose the
+proof into three lemmas leading to the main proposition. Before proceeding any further we start with the definition of uniform
+continuity and the Hausdorff distance across credible sets useful for establishing the uniform continuity properties.
+πL ,∗
+Definition 6 (Uniform Continuity). A function vL
+: X → R is uniformly continuous on X if:
+πL ,∗
+πL ,∗
+∀ε > 0, ∃δ > 0 such that ∀x, x̄ ∈ X, |x − x̄| < δ =⇒ |vL
+(x) − vL
+(x̄)| < ε.
+
+Next, we introduce a distance between two credible sets, x and x̄, drawn from the occupancy-state space O, using the Hausdorff
+distance with the ℓ1 -norm. The Hausdorff distance between two credible sets measures how far apart they are by capturing the
+worst-case minimal ℓ1 -distance needed to match each occupancy state in one set to some occupancy state in the other. If every
+occupancy state in both credible sets is close to at least one in the other, the sets are considered behaviorally close.
+Definition 7 (Hausdorff Distance). Let x, x̄ ⊂ O be finite credible sets, and equip the space of finite subsets of O with the
+Hausdorff distance dH induced by the ℓ1 -norm:
+.
+dH (x, x̄) = max {supo∈x inf ō∈x̄ ∥o − ō∥1 , supō∈x̄ inf o∈x ∥ō − o∥1 } .
+πL ,∗
+In demonstrating the uniform continuity of vL
+: X → R across credible sets, it will prove useful to show the uniform
+F
+continuity of value function vi : O → R across occupancy states for any player i ∈ {L, F } and collection F of value vector
+pairs α.
+
+
+Lemma F.1 (Uniform continuity of occupancy-based value functions). Let F be a finite set of value-vector pairs (αL , αF ), each
+linear over conditional occupancy states. For any player i ∈ {L, F }, define:
+X
+viF (o) = νi (o) +
+Pr(hF | o) ·
+max
+αi (c(o,hF ) )
+α∈F̄(c(o,hF ) )
+
+hF
+
+.
+′
+where F̄(c) = {α ∈ F | αF (c) = maxα′ ∈F αF
+(c)}. Then viF : O → R is uniformly continuous over occupancy states.
+Proof. Fix i ∈ {L, F }. Let us define for each follower action-observation hF the weighted conditional occupancy state: for any
+hidden state s and leader action-observation history hL ,
+.
+.
+η(o,hF ) (s, hL ) = Pr(hF | o) · c(o,hF ) (s, hL ) = o(s, hL , hF ).
+Thus, η(o,hF ) is linear in o. Since αi is linear over conditional occupancy state c(o,hF ) , the composition αi (η(o,hF ) ) is also
+therefore linear in o. The function viFt (o) is then the sum of νi (o), which is linear over o, and a finite sum of pointwise maxima
+over linear functions, which is convex and continuous. As occupancy-state space O is compact, the function is uniformly
+continuous.
+Lemma F.2 (Stability of filtered maxima under Hausdorff perturbations). Let v : O → R be uniformly continuous, and let
+x, x̄ ⊂ O be credible sets. Then for every ε > 0, there exists δ > 0 such that if dH (x, x̄) < δ, then
+max v(o) − max v(ō) < ε.
+o∈x
+
+ō∈x̄
+
+Proof. Fix ε > 0. By uniform continuity of v : O → R, there exists δ > 0 such that:
+∥o − ō∥1 < δ ⇒ |v(o) − v(ō)| < ε.
+Assume dH (x, x̄) < δ. Then:
+1. For every o ∈ x, there exists ō ∈ x̄ with ∥o − ō∥1 < δ, hence |v(o) − v(ō)| < ε. Taking maxima over o ∈ x, we obtain:
+max v(o) < max v(ō) + ε.
+o∈x
+
+ō∈x̄
+
+2. Similarly, for every ō ∈ x̄, there exists o ∈ x with ∥ō − o∥1 < δ, hence |v(ō) − v(o)| < ε, and thus:
+max v(ō) < max v(o) + ε.
+ō∈x̄
+
+o∈x
+
+Combining both bounds: |maxo∈x v(o) − maxō∈x̄ v(ō)| < ε.
+Lemma F.3 (Leader value function uniform continuity). Let v, u : O → R be uniformly continuous, and x, x̄ ⊂ O be credible
+sets. If we let v ∗ : x 7→ maxo∈x {v(o) | u(o) = maxo′ ∈x u(o′ )}, then:
+∀ε > 0, ∃δ > 0 such that if dH (x, x̄) < δ =⇒ |v ∗ (x) − v ∗ (x̄)| < ϵ.
+.
+∗ .
+Proof. Let x = {o ∈ x | u(o) = maxo′ ∈x u(o′ )} and x̄∗ = {o ∈ x̄ | u(o) = maxo′ ∈x u(o′ )} be filtered maxima sets. Fix
+ε > 0. By uniform continuity of v : O → R, there exists δ > 0 such that:
+∥o − ō∥1 < δ ⇒ |v(o) − v(ō)| < ε.
+Assume dH (x, x̄) < δ. Then:
+1. For every o ∈ x, there exists ō ∈ x̄ with ∥o − ō∥1 < δ, hence |v(o) − v(ō)| < ε. In particular, for every o∗ ∈ x∗ , there exists
+ō ∈ x̄ with ∥o∗ − ō∥1 < δ, hence |v(o∗ ) − v(ō)| < ε. Taking maxima over o∗ ∈ x∗ , we obtain:
+v(o∗ ) > v(ō) − ε =⇒ max
+v(o∗ ) > max v(ō) − ε =⇒ v ∗ (x) > v ∗ (x̄) − ε.
+∗
+∗
+o ∈x
+
+ō∈x
+
+2. Similarly, for every ō ∈ x̄, there exists o ∈ x with ∥ō − o∥1 < δ, hence |v(ō) − v(o)| < ε. In particular, for every ō∗ ∈ x̄∗ ,
+there exists o ∈ x with ∥ō∗ − o∥1 < δ, hence |v(ō∗ ) − v(o)| < ε. Taking maxima over ō∗ ∈ x̄∗ , we obtain:
+v(ō∗ ) > v(o) − ε =⇒ max
+v(ō∗ ) > max v(o) − ε =⇒ v ∗ (x̄) > v ∗ (x) − ε
+∗
+∗
+ō ∈x̄
+
+o∈x
+
+Combining both bounds: |v ∗ (x) − v ∗ (x̄)| < ε.
+Proposition F.4 (Uniform continuity of the leader value function over credible sets). Let πL ∈ ΠL be a fixed leader policy, and
+define the filtered leader value function:
+#
+#
+πL ,∗
+Ft
+Ft ′
+vL
+(x) = max vL
+(o) | o ∈ x, vFFt (o) = max
+v
+(o
+)
+.
+F
+′
+
+o ∈x
+πL ,∗
+Then the function x 7→ vL (x) is uniformly continuous over finite credible sets x ∈ X, where X is equipped with the Hausdorff
+metric induced by the ℓ1 -norm.
+
+Ft
+Proof. Let v = vL
+and u = vFFt . Both are uniformly continuous over O by Lemma F.1. The result then follows directly from
+Lemma F.3, which ensures the uniform continuity of x 7→ max{v(o) | o ∈ x, u(o) = maxo′ ∈x u(o′ )}.
+
+
+G
+
+Proof of Theorem 4.4
+
+∗
+Proof. The statement follows from the definition of the optimal leader value function vL
+: X → R: for any credible set x ∈ X at
+stage t ∈ {0, . . . , ℓ},
+.
+πL ,∗
+∗
+vL
+(x) = maxπL vL
+(x).
+
+Injecting Lemma 4.3 into the above expression leads to:
+π
+
+F L
+
+π
+
+π
+
+F L
+
+F L
+
+∗
+vL
+(x) = max{vL t (o) | vF t (o) = max
+vF t (o′ ), ∀o ∈ x}.
+′
+πL
+
+o ∈x
+
+. S
+If we let Lt = πL {FtπL }, then the following holds:
+∗
+F
+vL
+(x) = max {vL
+(o) | vFF (o) = max
+vFF (o′ ), ∀o ∈ x}.
+′
+F∈Lt
+
+o ∈x
+
+Which concludes the proof.
+
+H
+
+Proof of Theorem 5.1
+
+∗
+Proof. The proof starts with the definition of the greedy leader decision-rule σL
+selection at credible set x ∈ Xt′ , assuming we
+∗
+have access to collection Lt+1 approximating vL as leader value function vL . That is,
+∗
+σL
+∈ arg max vL (T (x, σL )) ≡ arg max qL (x, σL ).
+σL
+
+σL
+
+By the application of uniform continuity property, see Corollary 4.5, the following holds:
+∗
+F
+σL
+∈ arg max{qL
+(o, σL ) | {qFF (o, σL ) ≥ qFF (o′, σL ) | ∀o′ ∈ x}, ∀o ∈ x, ∀σL ∈ ΣL , ∀F ∈ Lt+1 }
+P
+qiF (o, σL ) = νi (o) + hF ,zF Pr(hF | o) · qiF (c(o,hF ) , σL , zF )
+.
+qiF (c, σL , zF ) = maxaF ∈AF ,α∈F̄(τ̃z (c,σL ,aF )) αi (τ̃zF (c, σL , aF )))
+F
+.
+′
+′
+where F̄(c) = {α ∈ F | αF (c) = maxα ∈F αF
+(c)}. Re-arranging terms results in the following :
+∗
+F
+σL
+∈ arg maxσL ∈ΣL maxo∈x maxF∈Lt+1 qL
+(o, σL )
+
+subject to : qFF (o, σL ) = maxo′∈x qFF (o′, σL ),
+P
+F
+F
+qL
+(o, σL ) = νL (o) + hF ,zF Pr(hF | o) · qL
+(c(o,hF ) , σL , zF )
+P
+F
+qF (o′, σL ) = νF (o′) + hF ,zF Pr(hF | o′) · qFF (c(o′,hF ) , σL , zF ), ∀o′ ∈ x
+qFF (c(o′,hF ) , σL , zF ) =
+F
+qL
+(c(o,hF ) , σL , zF ) =
+
+max
+
+αF (τ̃zF (c(o′,hF ) , σL , aF )), ∀o′ ∈ x, hF ∈ HF
+
+max
+
+{αL (τ̃zF (c(o,hF ) , σL , aF )) | αF (τ̃zF (c(o,hF ) , σL , aF )) = qFF (c, σL , zF )}, ∀hF ∈ HF .
+
+aF ∈AF ,α∈F
+aF ∈AF ,α∈F
+
+.
+.
+Let collections Cx = {c(o′,hF ) | ∀o′ ∈ x, hF ∈ HF } and Co = {c(o,hF ) | ∀hF ∈ HF }. Fix occupancy state o ∈ x (where
+F,o
+x ∈ Xt′ ) and value-vector set F ∈ Lt+1 , the greedy leader decision rule σL
+:
+F,o
+F
+σL
+∈ arg maxσL ∈ΣL qL
+(o, σL )
+
+subject to : qFF (o, σL ) = maxo′∈x qFF (o′, σL ),
+P
+F
+F
+qL
+(o, σL ) = νL (o) + hF ,zF Pr(hF | o) · qL
+(c(o,hF ) , σL , zF )
+P
+F
+qF (o′, σL ) = νF (o′) + hF ,zF Pr(hF | o′) · qFF (c(o′,hF ) , σL , zF ), ∀o′ ∈ x
+qFF (c, σL , zF ) =
+F
+qL
+(c, σL , zF ) =
+
+max
+
+αF (τ̃zF (c, σL , aF )), ∀c ∈ Cx
+
+(23)
+
+max
+
+{αL (τ̃zF (c, σL , aF )) | αF (τ̃zF (c, σL , aF )) = qFF (c, σL , zF )}, ∀c ∈ Co .
+
+(24)
+
+aF ∈AF ,α∈F
+aF ∈AF ,α∈F
+
+If we let {wFF (c, zF , α)} be boolean variables—suggestive of the fact that upon receiving observation zF the follower acts
+according to α when starting in c—then we can rewrite (23) as inequality constraints:
+F
+α∈F wF (c, zF , α) = 1, ∀c ∈ Cx , zF ∈ ZF
+
+P
+
+(25)
+
+qFF (c, σL , zF ) ≥ αF (τ̃zF (c, σL , aF )), ∀c ∈ Cx , aF ∈ AF , zF ∈ ZF , α ∈ F
+
+(26)
+
+qFF (c, σL , zF ) ≤ αF (τ̃zF (c, σL , aF )) + M · (1 − wFF (c, zF , α)), ∀c ∈ Cx , aF ∈ AF , zF ∈ ZF , α ∈ F
+
+(27)
+
+
+where (25)–(27) ensure we select the greedy vector value at conditional occupancy state c ∈ Cx upon receiving observation zF .
+Similarly, we now rewrite (24) as inequality constraints building on (25)–(27):
+F
+qL
+(c, σL , zF ) ≥ αL (τ̃zF (c, σL , aF )) − M · (1 − wFF (c, zF , α)), ∀c ∈ Co , aF ∈ AF , zF ∈ ZF , α ∈ F
+
+(28)
+
+F
+qL
+(c, σL , zF ) ≤ αL (τ̃zF (c, σL , aF )) + M · (1 − wFF (c, zF , α)), ∀c ∈ Co , aF ∈ AF , zF ∈ ZF , α ∈ F.
+
+(29)
+
+Putting all (25)–(29) together yields the following mixed-integer linear programme:
+F,o
+F
+σL
+∈ arg maxσL ∈ΣL qL
+(o, σL ),
+
+subject to : qFF (o, σL ) ≥ qFF (o′, σL ), ∀o′ ∈ x
+P
+F
+F
+qL
+(o, σL ) = νL (o) + hF ,zF Pr(hF | o) · qL
+(c(o,hF ) , σL , zF )
+P
+F
+qF (o′, σL ) = νF (o′) + hF ,zF Pr(hF | o′) · qFF (c(o′,hF ) , σL , zF ), ∀o′ ∈ x
+P
+F
+α∈F wF (c, zF , α) = 1, ∀c ∈ Cx , zF ∈ ZF
+qFF (c, σL , zF ) ≥ αF (τ̃zF (c, σL , aF )), ∀c ∈ Cx , aF ∈ AF , zF ∈ ZF , α ∈ F
+qFF (c, σL , zF ) ≤ αF (τ̃zF (c, σL , aF )) + M · (1 − wFF (c, zF , α)), ∀c ∈ Cx , aF ∈ AF , zF ∈ ZF , α ∈ F
+F
+qL
+(c(o,hF ) , σL , zF ) ≥ αL (τ̃zF (c, σL , aF )) − M · (1 − wFF (c, zF , α)), ∀c ∈ Co , aF ∈ AF , zF ∈ ZF , α ∈ F
+F
+qL
+(c, σL , zF ) ≤ αL (τ̃zF (c, σL , aF )) + M · (1 − wFF (c, zF , α)), ∀c ∈ Co , aF ∈ AF , zF ∈ ZF , α ∈ F.
+.
+.
+Injecting collections Cx = {c(o′,hF ) | ∀o′ ∈ x, hF ∈ HF } and Co = {c(o,hF ) | ∀hF ∈ HF } into the mixed integer linear
+programme leads us to the following mixed-integer linear programme:
+F,o
+F
+σL
+∈ arg maxσL ∈ΣL qL
+(o, σL ),
+
+subject to : qFF (o, σL ) ≥ qFF (o′, σL ), ∀o′ ∈ x
+P
+F
+F
+qL
+(o, σL ) = νL (o) + hF ,zF Pr(hF | o) · qL
+(c(o,hF ) , σL , zF )
+P
+F
+qF (o′, σL ) = νF (o′) + hF ,zF Pr(hF | o′) · qFF (c(o′,hF ) , σL , zF ), ∀o′ ∈ x
+P
+F
+α∈F wF (c, zF , α) = 1, ∀c ∈ Cx , zF ∈ ZF
+qFF (c, σL , zF ) ≥ αF (τ̃zF (c, σL , aF )), ∀c ∈ Cx , aF ∈ AF , zF ∈ ZF , α ∈ F
+qFF (c, σL , zF ) ≤ αF (τ̃zF (c, σL , aF )) + M · (1 − wFF (c, zF , α)), ∀c ∈ Cx , aF ∈ AF , zF ∈ ZF , α ∈ F
+F
+qL
+(c, σL , zF ) ≥ αL (τ̃zF (c, σL , aF )) − M · (1 − wFF (c, zF , α)), ∀c ∈ Co , aF ∈ AF , zF ∈ ZF , α ∈ F
+F
+qL
+(c, σL , zF ) ≤ αL (τ̃zF (c, σL , aF )) + M · (1 − wFF (c, zF , α)), ∀c ∈ Co , aF ∈ AF , zF ∈ ZF , α ∈ F.
+
+Which ends the proof.
+
+I
+
+Proof of Theorem 5.3
+
+∗
+Proof. Let πL
+be the optimal leader policy, and let πLPBVI be the leader policy induced by the PBVI approximation. Let
+∗
+(x∗0 , . . . , x∗ℓ ) be the credible set trajectory induced by πL
+, and let (x0 , . . . , xℓ ) be the trajectory induced by πLPBVI . Note that
+∗
+x0 = x0 by construction. The discrepancy arises only after the first decision point. The exploitability is defined as:
+
+. ∗
+ε = vL
+(x0 ) − vL (x0 ) = R(x∗ℓ ) − R(xℓ ),
+since only the final reward R(·) contributes to the return. Now, because the PBVI approximation uses only sets from the
+sampled collection X ′ , by the definition of the Hausdorff covering radius δ, we have: dH (x∗ℓ , xℓ ) ≤ δ. Let νL (o) and νF (o)
+denote the leader and follower cumulative returns over any occupancy state o ∈ O, both of which are linear in o, and hence
+Lipschitz with constant at most mℓ. By Lemma F.2, the filtered maximum R(x) of a Lipschitz function over a set x satisfies:
+|R(x∗ℓ ) − R(xℓ )| ≤ mℓ · dH (x∗ℓ , xℓ ) ≤ mℓδ. Therefore, the exploitability is bounded as: ε ≤ mℓδ.
+.
+
+
+
