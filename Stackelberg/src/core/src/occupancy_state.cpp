@@ -6,6 +6,7 @@
 // Fit: Used throughout the CMDP solution for value iteration, policy selection, and simulation.
 
 #include "../include/occupancy_state.hpp"
+#include "../include/conditional_occupancy_state.hpp"
 #include "../include/common.hpp"
 #include "../include/transition_model.hpp"
 #include "../include/observation_model.hpp"
@@ -226,6 +227,7 @@ namespace posg_core {
 
     std::unordered_map<int, double> OccupancyState::get_state_marginal() const {
         std::unordered_map<int, double> marginal;
+        double sum = 0.0;
         for (const auto& [state, leader_histories] : occupancy_distribution) {
             double state_prob = 0.0;
             for (const auto& [leader_history, follower_histories] : leader_histories) {
@@ -235,6 +237,13 @@ namespace posg_core {
             }
             if (state_prob > 0.0) {
                 marginal[state] = state_prob;
+                sum += state_prob;
+            }
+        }
+        // Normalize
+        if (sum > 0.0) {
+            for (auto& [state, prob] : marginal) {
+                prob /= sum;
             }
         }
         return marginal;
@@ -242,6 +251,7 @@ namespace posg_core {
 
     std::unordered_map<AgentHistory, double> OccupancyState::get_leader_history_marginal() const {
         std::unordered_map<AgentHistory, double> marginal;
+        double sum = 0.0;
         for (const auto& [state, leader_histories] : occupancy_distribution) {
             for (const auto& [leader_history, follower_histories] : leader_histories) {
                 double history_prob = 0.0;
@@ -250,7 +260,14 @@ namespace posg_core {
                 }
                 if (history_prob > 0.0) {
                     marginal[leader_history] += history_prob;
+                    sum += history_prob;
                 }
+            }
+        }
+        // Normalize
+        if (sum > 0.0) {
+            for (auto& [history, prob] : marginal) {
+                prob /= sum;
             }
         }
         return marginal;
@@ -258,13 +275,21 @@ namespace posg_core {
 
     std::unordered_map<AgentHistory, double> OccupancyState::get_follower_history_marginal() const {
         std::unordered_map<AgentHistory, double> marginal;
+        double sum = 0.0;
         for (const auto& [state, leader_histories] : occupancy_distribution) {
             for (const auto& [leader_history, follower_histories] : leader_histories) {
                 for (const auto& [follower_history, prob] : follower_histories) {
                     if (prob > 0.0) {
                         marginal[follower_history] += prob;
+                        sum += prob;
                     }
                 }
+            }
+        }
+        // Normalize
+        if (sum > 0.0) {
+            for (auto& [history, prob] : marginal) {
+                prob /= sum;
             }
         }
         return marginal;
@@ -276,7 +301,7 @@ namespace posg_core {
             for (const auto& [leader_history, follower_histories] : leader_histories) {
                 for (const auto& [follower_history, prob] : follower_histories) {
                     if (prob > 0.0) {
-                        entropy_val -= prob * std::log(prob);
+                        entropy_val -= prob * std::log(prob); // Use natural log
                     }
                 }
             }
@@ -325,20 +350,42 @@ namespace posg_core {
                 }
             }
         }
-        
         if (sum > 0.0) {
-            for (auto& [state, leader_histories] : occupancy_distribution) {
-                for (auto& [leader_history, follower_histories] : leader_histories) {
-                    for (auto& [follower_history, prob] : follower_histories) {
-                        prob /= sum;
+            for (auto state_it = occupancy_distribution.begin(); state_it != occupancy_distribution.end(); ) {
+                auto& leader_histories = state_it->second;
+                for (auto leader_it = leader_histories.begin(); leader_it != leader_histories.end(); ) {
+                    auto& follower_histories = leader_it->second;
+                    for (auto follower_it = follower_histories.begin(); follower_it != follower_histories.end(); ) {
+                        follower_it->second /= sum;
+                        if (follower_it->second == 0.0) {
+                            follower_it = follower_histories.erase(follower_it);
+                        } else {
+                            ++follower_it;
+                        }
+                    }
+                    if (follower_histories.empty()) {
+                        leader_it = leader_histories.erase(leader_it);
+                    } else {
+                        ++leader_it;
                     }
                 }
+                if (leader_histories.empty()) {
+                    state_it = occupancy_distribution.erase(state_it);
+                } else {
+                    ++state_it;
+                }
             }
+        } else {
+            occupancy_distribution.clear();
         }
         is_normalized = true;
     }
 
-    bool OccupancyState::is_valid() const {
+    bool OccupancyState::is_valid(bool allow_empty) const {
+        if (!is_normalized) {
+            const_cast<OccupancyState*>(this)->normalize();
+        }
+        if (occupancy_distribution.empty()) return allow_empty;
         double sum = 0.0;
         for (const auto& [state, leader_histories] : occupancy_distribution) {
             for (const auto& [leader_history, follower_histories] : leader_histories) {
@@ -349,6 +396,10 @@ namespace posg_core {
             }
         }
         return std::abs(sum - 1.0) < 1e-6;
+    }
+
+    bool OccupancyState::is_valid() const {
+        return is_valid(true);
     }
 
     std::string OccupancyState::to_string() const {
@@ -417,6 +468,44 @@ namespace posg_core {
             }
         }
         return hash;
+    }
+
+    ConditionalOccupancyState OccupancyState::conditional_decompose(const AgentHistory& follower_history) const {
+        /**
+         * From Paper: o = Σ_hF Pr(hF | o) · c(o,hF) ⊗ e_hF
+         * where c(o,hF) is the conditional occupancy state given follower history hF
+         * 
+         * We compute c(o,hF) by extracting Pr(state, leader_history | follower_history)
+         */
+        
+        ConditionalOccupancyState conditional_state(follower_history);
+        conditional_state.set_timestep(timestep);
+        
+        // Get marginal probability of this follower history
+        auto follower_marginal = get_follower_history_marginal();
+        auto follower_prob_it = follower_marginal.find(follower_history);
+        
+        if (follower_prob_it == follower_marginal.end() || follower_prob_it->second <= 0.0) {
+            // No probability mass for this follower history, return empty conditional state
+            return conditional_state;
+        }
+        
+        double follower_prob = follower_prob_it->second;
+        
+        // Extract conditional probabilities: Pr(state, leader_history | follower_history)
+        for (const auto& [state, leader_histories] : occupancy_distribution) {
+            for (const auto& [leader_history, follower_histories] : leader_histories) {
+                auto follower_it = follower_histories.find(follower_history);
+                if (follower_it != follower_histories.end() && follower_it->second > 0.0) {
+                    // Pr(state, leader_history | follower_history) = Pr(state, leader_history, follower_history) / Pr(follower_history)
+                    double conditional_prob = follower_it->second / follower_prob;
+                    conditional_state.set_conditional_occupancy(state, leader_history, conditional_prob);
+                }
+            }
+        }
+        
+        conditional_state.normalize();
+        return conditional_state;
     }
 
 } // namespace posg_core 

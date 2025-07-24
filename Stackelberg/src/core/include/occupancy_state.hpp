@@ -15,71 +15,32 @@ namespace posg_core {
     class JointObservation;
     class TransitionModel;
     class ObservationModel;
-
-    /**
-     * @brief Represents a history of actions and observations for an agent
-     */
-    class AgentHistory {
-    private:
-        std::vector<Action> actions;
-        std::vector<Observation> observations;
-        int agent_id;
-
-    public:
-        AgentHistory(int agent_id);
-        
-        void add_action(const Action& action);
-        void add_observation(const Observation& observation);
-        
-        const std::vector<Action>& get_actions() const { return actions; }
-        const std::vector<Observation>& get_observations() const { return observations; }
-        int get_agent_id() const { return agent_id; }
-        size_t length() const { return actions.size(); }
-        
-        std::string to_string() const;
-        bool operator==(const AgentHistory& other) const;
-        bool operator!=(const AgentHistory& other) const;
-        bool operator<(const AgentHistory& other) const;
-    };
-
-} // namespace posg_core
-
-// Hash specialization for AgentHistory
-namespace std {
-    template<>
-    struct hash<posg_core::AgentHistory> {
-        std::size_t operator()(const posg_core::AgentHistory& h) const {
-            std::size_t hash = std::hash<int>{}(h.get_agent_id());
-            for (const auto& a : h.get_actions()) {
-                hash ^= std::hash<int>{}(a.get_action_id()) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-            }
-            for (const auto& o : h.get_observations()) {
-                hash ^= std::hash<int>{}(o.get_observation_id()) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-            }
-            return hash;
-        }
-    };
-}
-
-namespace posg_core {
+    class ConditionalOccupancyState;
 
     /**
      * @brief Represents an occupancy state - distribution over (state, leader_history, follower_history)
      * 
-     * This is the core concept from the AAAI 2026 paper. An occupancy state represents
-     * the leader's belief about the joint state of the environment and both agents' histories.
-     * This is fundamentally different from POMDP belief states which only track state distributions.
+     * From Paper: Definition 1 - Occupancy State
+     * An occupancy state μ is a distribution over (s, hL, hF) where:
+     * - s ∈ S is the environment state
+     * - hL ∈ HL is the leader's history of actions and observations
+     * - hF ∈ HF is the follower's history of actions and observations
+     * 
+     * This represents the leader's belief about the joint state of the environment 
+     * and both agents' information states, enabling strategic reasoning over the
+     * follower's rationality and information asymmetry.
      */
     class OccupancyState {
     private:
         // Map from (state, leader_history, follower_history) to probability
+        // μ(s, hL, hF) = Pr(s, hL, hF | information available to leader)
         std::unordered_map<int, std::unordered_map<AgentHistory, 
             std::unordered_map<AgentHistory, double>>> occupancy_distribution;
         
-        // Timestep tracking
+        // Timestep tracking for temporal consistency
         int timestep;
         
-        // Cache for normalization
+        // Cache for normalization status
         mutable bool is_normalized;
 
     public:
@@ -101,19 +62,47 @@ namespace posg_core {
         /**
          * @brief Add or update an entry in the occupancy distribution.
          *
-         * If the entry already exists, its probability is overwritten. If the probability is negative,
-         * throws std::invalid_argument. If probability is zero, the entry is removed if present.
-         *
-         * @param state The environment state index
-         * @param leader_history The leader's AgentHistory
-         * @param follower_history The follower's AgentHistory
-         * @param probability The probability to assign (must be >= 0)
+         * From Paper: μ(s, hL, hF) = probability
+         * 
+         * @param state The environment state s ∈ S
+         * @param leader_history The leader's history hL ∈ HL
+         * @param follower_history The follower's history hF ∈ HF
+         * @param probability The probability μ(s, hL, hF) ≥ 0
          */
         void add_entry(int state, const AgentHistory& leader_history, const AgentHistory& follower_history, double probability);
+        
+        /**
+         * @brief Decompose occupancy state into conditional occupancy state given follower history
+         * 
+         * From Paper: Lemma 4.1 - Conditional Decomposition
+         * μ = Σ_hF Pr(hF | μ) · c(μ, hF) ⊗ e_hF
+         * where c(μ, hF) is the conditional occupancy state given follower history hF
+         * 
+         * @param follower_history The follower history hF to condition on
+         * @return Conditional occupancy state c(μ, hF)
+         */
+        ConditionalOccupancyState conditional_decompose(const AgentHistory& follower_history) const;
 
-        // Get marginal distributions
+        // Marginal distributions
+        /**
+         * @brief Get state marginal distribution
+         * 
+         * From Paper: μ(s) = Σ_hL,hF μ(s, hL, hF)
+         */
         std::unordered_map<int, double> get_state_marginal() const;
+        
+        /**
+         * @brief Get leader history marginal distribution
+         * 
+         * From Paper: μ(hL) = Σ_s,hF μ(s, hL, hF)
+         */
         std::unordered_map<AgentHistory, double> get_leader_history_marginal() const;
+        
+        /**
+         * @brief Get follower history marginal distribution
+         * 
+         * From Paper: μ(hF) = Σ_s,hL μ(s, hL, hF)
+         */
         std::unordered_map<AgentHistory, double> get_follower_history_marginal() const;
         
         // Access internal distribution (for CredibleSet use)
@@ -126,11 +115,23 @@ namespace posg_core {
         int get_timestep() const { return timestep; }
 
         // Information measures
+        /**
+         * @brief Compute entropy of the occupancy state
+         * 
+         * From Paper: H(μ) = -Σ_s,hL,hF μ(s, hL, hF) log μ(s, hL, hF)
+         */
         double entropy() const;
+        
+        /**
+         * @brief Compute ℓ1-distance to another occupancy state
+         * 
+         * From Paper: ||μ - μ'||₁ = Σ_s,hL,hF |μ(s, hL, hF) - μ'(s, hL, hF)|
+         */
         double distance_to(const OccupancyState& other) const;
         
         // Utility methods
         void normalize();
+        bool is_valid(bool allow_empty = true) const;
         bool is_valid() const;
         std::string to_string() const;
         

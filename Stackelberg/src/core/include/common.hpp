@@ -51,6 +51,39 @@ namespace posg_core {
     };
 
     /**
+     * @brief Represents a history of actions and observations for an agent
+     * 
+     * From Paper: Agent History
+     * An agent history h_i = (a_i^1, z_i^1, a_i^2, z_i^2, ..., a_i^t, z_i^t) where:
+     * - a_i^j is the j-th action taken by agent i
+     * - z_i^j is the j-th observation received by agent i
+     * 
+     * This tracks the complete information available to an agent at any timestep.
+     */
+    class AgentHistory {
+    private:
+        std::vector<Action> actions;
+        std::vector<Observation> observations;
+        int agent_id;
+
+    public:
+        AgentHistory(int agent_id);
+        
+        void add_action(const Action& action);
+        void add_observation(const Observation& observation);
+        
+        const std::vector<Action>& get_actions() const { return actions; }
+        const std::vector<Observation>& get_observations() const { return observations; }
+        int get_agent_id() const { return agent_id; }
+        size_t length() const { return actions.size(); }
+        
+        std::string to_string() const;
+        bool operator==(const AgentHistory& other) const;
+        bool operator!=(const AgentHistory& other) const;
+        bool operator<(const AgentHistory& other) const;
+    };
+
+    /**
      * @brief Represents a joint action (leader action + follower action)
      */
     class JointAction {
@@ -136,6 +169,25 @@ namespace std {
             std::size_t h1 = std::hash<int>{}(o.get_observation_id());
             std::size_t h2 = std::hash<int>{}(o.get_agent_id());
             return h1 ^ (h2 << 1);
+        }
+    };
+
+    /**
+     * @brief Hash specialization for posg_core::AgentHistory
+     *
+     * Hashes the agent_id and all actions/observations in the history.
+     */
+    template<>
+    struct hash<posg_core::AgentHistory> {
+        std::size_t operator()(const posg_core::AgentHistory& h) const {
+            std::size_t hash = std::hash<int>{}(h.get_agent_id());
+            for (const auto& a : h.get_actions()) {
+                hash ^= std::hash<int>{}(a.get_action_id()) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+            }
+            for (const auto& o : h.get_observations()) {
+                hash ^= std::hash<int>{}(o.get_observation_id()) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+            }
+            return hash;
         }
     };
 } 

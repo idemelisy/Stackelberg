@@ -52,6 +52,7 @@ namespace posg_parser {
         std::string filename;
         POSGProblem problem;
         int planning_horizon_ = 0;
+        bool allow_sparse_ = true;
         
         // Helper methods
         void parse_header(std::ifstream& file);
@@ -67,7 +68,7 @@ namespace posg_parser {
         std::vector<double> parse_probabilities(const std::vector<std::string>& tokens, int start_idx);
 
     public:
-        POSGParser(const std::string& filename, int planning_horizon = 0);
+        POSGParser(const std::string& filename, int planning_horizon, bool allow_sparse = true);
         
         /**
          * @brief Parse the POSG problem file

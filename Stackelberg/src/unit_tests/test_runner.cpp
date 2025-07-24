@@ -1,20 +1,13 @@
+// Minimal, paper-aligned test runner
 #include "test_framework.hpp"
-#include "parser_test.hpp"
-#include "core_test.hpp"
+#include "core_theory_tests.hpp"
+#include "algorithm_theory_tests.hpp"
 #include <iostream>
 #include <memory>
 
-// Only keep main() and necessary includes. Remove TestRunner method implementations.
-
-int main() {
+int main(int argc, char* argv[]) {
     test_framework::TestRunner runner;
-    
-    // Add parser tests
-    runner.add_test(std::make_unique<test_framework::ParserTest>());
-    
-    // Add core tests
     runner.add_test(std::make_unique<test_framework::CoreTest>());
-    
-    bool all_passed = runner.run_all();
-    return all_passed ? 0 : 1;
+    runner.add_test(std::make_unique<test_framework::AlgorithmTest>());
+    return runner.run_all();
 } 

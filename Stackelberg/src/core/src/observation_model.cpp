@@ -69,6 +69,48 @@ namespace posg_core {
         return observation_probabilities[state][action_index][obs_index];
     }
 
+    // Sample joint observation given state and joint action
+    JointObservation ObservationModel::sample_joint_observation(int state, const JointAction& joint_action) const {
+        // TODO: Implement proper probabilistic sampling
+        // For now, just return the first nonzero observation (stub)
+        auto obs_probs = get_observations_and_probabilities(state, joint_action);
+        if (obs_probs.empty()) {
+            // Return a default observation if none are defined
+            return JointObservation(Observation(0, 0), Observation(0, 1));
+        }
+        return obs_probs.front().first;
+    }
+
+    // Sample leader observation given state and leader action
+    Observation ObservationModel::sample_leader_observation(int state, const Action& leader_action) const {
+        // TODO: Implement proper probabilistic sampling
+        // For now, return default observation
+        return Observation(0, 0);
+    }
+
+    // Sample follower observation given state and follower action
+    Observation ObservationModel::sample_follower_observation(int state, const Action& follower_action) const {
+        // TODO: Implement proper probabilistic sampling
+        // For now, return default observation
+        return Observation(0, 1);
+    }
+
+    // Get leader observation probability
+    double ObservationModel::get_leader_observation_probability(int state, const Action& leader_action,
+                                                              const Observation& leader_obs) const {
+        // TODO: Implement proper marginalization over follower actions and observations
+        // For now, return uniform probability
+        return 1.0 / num_leader_observations;
+    }
+
+    // Get follower observation probability
+    double ObservationModel::get_follower_observation_probability(int state, const Action& follower_action,
+                                                                const Observation& follower_obs) const {
+        // TODO: Implement proper marginalization over leader actions and observations
+        // For now, return uniform probability
+        return 1.0 / num_follower_observations;
+    }
+
     // Get all possible joint observations and their probabilities for a given (state, joint_action).
     // What: Returns a vector of (joint_observation, probability) pairs.
     // Why: Used in value iteration and belief updates.
@@ -162,16 +204,5 @@ namespace posg_core {
         }
         return joint_observations;
     }
-
-JointObservation ObservationModel::sample_joint_observation(int state, const JointAction& joint_action) const {
-    // Get all possible joint observations and their probabilities
-    auto obs_probs = get_observations_and_probabilities(state, joint_action);
-    if (obs_probs.empty()) {
-        // Return a default observation if none are defined
-        return JointObservation(Observation(0, 0), Observation(0, 1));
-    }
-    // For now, just return the first nonzero observation (stub)
-    return obs_probs.front().first;
-}
 
 } // namespace posg_core 
