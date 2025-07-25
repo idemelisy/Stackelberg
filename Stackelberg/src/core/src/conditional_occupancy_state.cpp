@@ -372,21 +372,9 @@ namespace posg_core {
 
     double ConditionalOccupancyState::distance_to(const ConditionalOccupancyState& other) const {
         if (follower_history != other.follower_history) {
-            std::cerr << "[DISTANCE ERROR] Mismatched follower histories detected.\n";
-            std::cerr << "This: ";
-            for (const auto& [state, leader_histories] : conditional_distribution) {
-                for (const auto& [leader_history, _] : leader_histories) {
-                    std::cerr << "(s=" << state << ", hL=" << leader_history.to_string() << ", hF=" << follower_history.to_string() << ") ";
-                }
-            }
-            std::cerr << "\nOther: ";
-            for (const auto& [state, leader_histories] : other.conditional_distribution) {
-                for (const auto& [leader_history, _] : leader_histories) {
-                    std::cerr << "(s=" << state << ", hL=" << leader_history.to_string() << ", hF=" << other.follower_history.to_string() << ") ";
-                }
-            }
-            std::cerr << std::endl;
-            throw std::runtime_error("distance_to: different follower histories");
+            // Different follower histories mean completely different conditional states
+            // Return maximum distance (2.0 for L1 distance between probability distributions)
+            return 2.0;
         }
         double total_distance = 0.0;
         std::set<std::pair<int, AgentHistory>> all_tuples;

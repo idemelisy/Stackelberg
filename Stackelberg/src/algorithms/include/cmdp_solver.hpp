@@ -87,7 +87,7 @@ namespace posg_algorithms {
          * @brief Constructor with POSG problem
          * @param problem The parsed POSG problem
          */
-        explicit CMDPSolver(const posg_parser::POSGProblem& problem);
+        explicit CMDPSolver(const posg_parser::POSGProblem& problem, double milp_time_limit = 10.0);
         
         /**
          * @brief Reduce Leader-Follower POSG to Credible MDP
@@ -158,6 +158,7 @@ namespace posg_algorithms {
         
         // MILP solver for improve phase
         MILPSolver milp_solver_;
+        double milp_time_limit_ = 10.0;
         
         /**
          * @brief Compute successor occupancy states under joint actions

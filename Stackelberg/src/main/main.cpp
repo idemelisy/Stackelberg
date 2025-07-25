@@ -26,6 +26,7 @@ namespace {
         std::string problem_file;
         size_t max_iterations = 500;
         double epsilon = 1e-4;
+        double milp_time_limit = 10.0; // Default MILP time limit in seconds
     };
 
     CLIArgs parse_args(int argc, char* argv[]) {
@@ -45,8 +46,14 @@ namespace {
                 args.max_iterations = static_cast<size_t>(std::stoul(next()));
             } else if (token == "--epsilon" || token == "-e") {
                 args.epsilon = std::stod(next());
+            } else if (token == "--milpTimeLimit" || token == "--milp-time-limit") {
+                args.milp_time_limit = std::stod(next());
             } else if (token == "--help" || token == "-h") {
-                std::cout << "Usage: " << argv[0] << " --problem file.stackelberg [--maxIter N] [--epsilon E]\n";
+                std::cout << "Usage: " << argv[0] << " --problem file.stackelberg [--maxIter N] [--epsilon E] [--milpTimeLimit S]\n";
+                std::cout << "  --problem/-p         Path to .stackelberg problem file\n";
+                std::cout << "  --maxIter/-n         Max PBVI iterations (default: 500)\n";
+                std::cout << "  --epsilon/-e         Target epsilon (default: 1e-4)\n";
+                std::cout << "  --milpTimeLimit      MILP time limit in seconds (default: 10)\n";
                 std::exit(0);
             } else {
                 throw std::runtime_error("Unknown argument: " + token);
@@ -68,6 +75,7 @@ int main(int argc, char* argv[]) {
         LOG_INFO("Problem File      : " << cli.problem_file);
         LOG_INFO("Max PBVI Iterations: " << cli.max_iterations);
         LOG_INFO("Target ε          : " << cli.epsilon);
+        LOG_INFO("MILP Time Limit     : " << cli.milp_time_limit << " seconds");
 
         // ------------------------------------------------------------------
         // Parse POSG problem file
@@ -87,7 +95,7 @@ int main(int argc, char* argv[]) {
         // Solver setup
         // ------------------------------------------------------------------
         LOG_INFO("[3] Initialising CMDPSolver & running PBVI+MILP…");
-        posg_algorithms::CMDPSolver solver(problem);
+        posg_algorithms::CMDPSolver solver(problem, cli.milp_time_limit);
         posg_algorithms::ValueFunction value_function = solver.pbvi_with_milp(
             initial_occupancies, cli.max_iterations, cli.epsilon);
 

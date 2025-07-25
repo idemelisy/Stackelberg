@@ -53,6 +53,8 @@ constexpr double BIG_M_CONSTANT = 1e4;
         IloNumArray transition_probs_;           // P(s'|s, a_L, a_F) transition probabilities
         IloNumArray observation_probs_;          // P(z_L, z_F|s', a_L, a_F) observation probabilities
         
+        double milp_time_limit_ = 10.0;
+        
         /**
          * @brief Setup the MILP problem formulation
          * 
@@ -125,7 +127,7 @@ constexpr double BIG_M_CONSTANT = 1e4;
                                         const std::function<double(int, const posg_core::Action&, const posg_core::Action&)>& reward_func);
 
     public:
-        MILPSolver();
+        MILPSolver(double milp_time_limit = 10.0);
         ~MILPSolver();
         
         /**

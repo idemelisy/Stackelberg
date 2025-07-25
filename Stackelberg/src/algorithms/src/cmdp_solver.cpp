@@ -6,6 +6,8 @@
 #include <numeric>
 #include <unordered_set>
 #include "../../common/logging.hpp"
+#include <chrono>
+#include <random> // Added for random sampling
 
 namespace posg_algorithms {
 
@@ -90,8 +92,8 @@ namespace posg_algorithms {
     // CMDPSolver Implementation
     // ============================================================================
 
-    CMDPSolver::CMDPSolver(const posg_parser::POSGProblem& problem) 
-        : problem_(problem) {
+    CMDPSolver::CMDPSolver(const posg_parser::POSGProblem& problem, double milp_time_limit)
+        : problem_(problem), milp_time_limit_(milp_time_limit), milp_solver_(milp_time_limit) {
         // Initialize transition and observation models from the problem
         // Use the models that are already part of the problem
         transition_model_ = problem.transition_model;
@@ -166,70 +168,138 @@ namespace posg_algorithms {
     std::vector<posg_core::CredibleSet> CMDPSolver::expand_credible_sets(
         const std::vector<posg_core::CredibleSet>& current_credible_sets,
         double epsilon) {
-        // Use a slightly larger default epsilon for expansion
-        if (epsilon < 1e-6) epsilon = 0.05;
+        constexpr double similarity_epsilon = 0.05;
+        constexpr int num_leader_samples = 10;
+        constexpr int num_follower_samples = 10;
+        constexpr double dirichlet_alpha = 0.5;
         std::vector<posg_core::CredibleSet> expanded_sets;
-        for (const auto& credible_set : current_credible_sets) {
-            posg_core::CredibleSet new_credible_set;
-            std::vector<posg_core::ConditionalOccupancyState> Cy;
-            posg_core::LeaderDecisionRule sampled_leader_rule(0);
-            for (int action_id = 0; action_id < transition_model_.get_num_leader_actions(); ++action_id) {
-                posg_core::Action action(action_id, 0);
-                posg_core::AgentHistory empty_history(0);
-                sampled_leader_rule.set_action_probability(empty_history, action, 
-                    1.0 / transition_model_.get_num_leader_actions());
-            }
-            bool added_any = false;
-            for (const auto& occupancy_state : credible_set.get_occupancy_states()) {
-                auto follower_marginal = occupancy_state.get_follower_history_marginal();
-                for (const auto& [follower_history, _] : follower_marginal) {
-                    posg_core::FollowerDecisionRule follower_rule(0);
-                    for (int aF_id = 0; aF_id < transition_model_.get_num_follower_actions(); ++aF_id) {
-                        posg_core::Action aF(aF_id, 1);
-                        follower_rule.set_action_probability(follower_history, aF, 1.0 / transition_model_.get_num_follower_actions());
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::gamma_distribution<double> gamma_dist(dirichlet_alpha, 1.0);
+        try {
+            for (const auto& credible_set : current_credible_sets) {
+                if (credible_set.get_occupancy_states().empty()) {
+                    std::cerr << "[EXPAND WARNING] Credible set has no occupancy states!" << std::endl;
+                    continue;
+                }
+                posg_core::CredibleSet new_credible_set;
+                int new_conditional_count = 0;
+                int new_occupancy_count = 0;
+                std::vector<posg_core::ConditionalOccupancyState> added_conditionals;
+                std::vector<posg_core::OccupancyState> added_occupancies;
+                for (int l_sample = 0; l_sample < num_leader_samples; ++l_sample) {
+                    posg_core::LeaderDecisionRule sampled_leader_rule(0);
+                    std::vector<double> leader_probs;
+                    double leader_total = 0.0;
+                    for (int action_id = 0; action_id < transition_model_.get_num_leader_actions(); ++action_id) {
+                        double prob = gamma_dist(gen);
+                        leader_probs.push_back(prob);
+                        leader_total += prob;
                     }
-                    for (int zF_id = 0; zF_id < observation_model_.get_num_follower_observations(); ++zF_id) {
-                        posg_core::Observation zF(zF_id, 1);
-                        auto conditional_state = occupancy_state.conditional_decompose(follower_history);
-                        posg_core::Action follower_action = follower_rule.sample_action(follower_history);
-                        auto updated_conditional = conditional_state.tau_zF(
-                            sampled_leader_rule,
-                            follower_action,
-                            zF,
-                            transition_model_,
-                            observation_model_
-                        );
-                        bool should_retain = true;
-                        if (!Cy.empty()) {
-                            double max_distance = 0.0;
-                            for (const auto& existing_conditional : Cy) {
-                                double distance = updated_conditional.distance_to(existing_conditional);
-                                max_distance = std::max(max_distance, distance);
+                    for (int action_id = 0; action_id < transition_model_.get_num_leader_actions(); ++action_id) {
+                        posg_core::Action action(action_id, 0);
+                        posg_core::AgentHistory empty_history(0);
+                        double norm_prob = leader_probs[action_id] / (leader_total > 0 ? leader_total : 1.0);
+                        norm_prob = std::max(0.0, std::min(1.0, norm_prob));
+                        sampled_leader_rule.set_action_probability(empty_history, action, norm_prob);
+                    }
+                    sampled_leader_rule.normalize();
+                    for (const auto& occupancy_state : credible_set.get_occupancy_states()) {
+                        auto follower_marginal = occupancy_state.get_follower_history_marginal();
+                        for (const auto& [follower_history, _] : follower_marginal) {
+                            for (int f_sample = 0; f_sample < num_follower_samples; ++f_sample) {
+                                posg_core::FollowerDecisionRule follower_rule(0);
+                                std::vector<double> probs;
+                                double total_prob = 0.0;
+                                for (int aF_id = 0; aF_id < transition_model_.get_num_follower_actions(); ++aF_id) {
+                                    double prob = gamma_dist(gen);
+                                    probs.push_back(prob);
+                                    total_prob += prob;
+                                }
+                                for (int aF_id = 0; aF_id < transition_model_.get_num_follower_actions(); ++aF_id) {
+                                    posg_core::Action aF(aF_id, 1);
+                                    double norm_prob = probs[aF_id] / (total_prob > 0 ? total_prob : 1.0);
+                                    norm_prob = std::max(0.0, std::min(1.0, norm_prob));
+                                    follower_rule.set_action_probability(follower_history, aF, norm_prob);
+                                }
+                                follower_rule.normalize();
+                                for (int zF_id = 0; zF_id < observation_model_.get_num_follower_observations(); ++zF_id) {
+                                    posg_core::Observation zF(zF_id, 1);
+                                    auto conditional_state = occupancy_state.conditional_decompose(follower_history);
+                                    posg_core::Action follower_action = follower_rule.sample_action(follower_history);
+                                    auto updated_conditional = conditional_state.tau_zF(
+                                        sampled_leader_rule,
+                                        follower_action,
+                                        zF,
+                                        transition_model_,
+                                        observation_model_
+                                    );
+                                    // Similarity check: L1 distance to all previous
+                                    bool should_retain = true;
+                                    for (const auto& existing_conditional : added_conditionals) {
+                                        double distance = updated_conditional.distance_to(existing_conditional);
+                                        if (distance <= similarity_epsilon) {
+                                            should_retain = false;
+                                            break;
+                                        }
+                                    }
+                                    if (should_retain) {
+                                        ++new_conditional_count;
+                                        added_conditionals.push_back(updated_conditional);
+                                        // Add to a new occupancy state via tau
+                                        posg_core::OccupancyState successor_state = tau_function(
+                                            occupancy_state, sampled_leader_rule, follower_rule);
+                                        // OccupancyState equality: compare distributions directly
+                                        bool already_present = false;
+                                        for (const auto& occ : added_occupancies) {
+                                            if (occ.get_occupancy_distribution() == successor_state.get_occupancy_distribution()) {
+                                                already_present = true;
+                                                break;
+                                            }
+                                        }
+                                        if (!already_present) {
+                                            new_credible_set.add_occupancy_state(successor_state);
+                                            added_occupancies.push_back(successor_state);
+                                            ++new_occupancy_count;
+                                            // Print the full occupancy distribution for this new state
+                                            std::cout << "[DEBUG] New occupancy state distribution: " << successor_state.to_string() << std::endl;
+                                        }
+                                    }
+                                }
                             }
-                            should_retain = (max_distance > epsilon);
-                        }
-                        if (should_retain) {
-                            Cy.push_back(updated_conditional);
-                        }
-                    }
-                    // Move tau_function call here, so follower_rule is in scope
-                    if (!Cy.empty()) {
-                        posg_core::OccupancyState successor_state = tau_function(
-                            occupancy_state, sampled_leader_rule, follower_rule);
-                        // Always retain the first occupancy state if the set is empty
-                        if (new_credible_set.get_occupancy_states().empty() || should_retain_occupancy_state(successor_state, new_credible_set, epsilon)) {
-                            new_credible_set.add_occupancy_state(successor_state);
-                            added_any = true;
                         }
                     }
                 }
+                if (!new_credible_set.get_occupancy_states().empty() || expanded_sets.empty()) {
+                    expanded_sets.push_back(new_credible_set);
+                }
+                std::cout << "[DEBUG] expand_credible_sets: New conditional occupancy states added: " << new_conditional_count << std::endl;
+                std::cout << "[DEBUG] expand_credible_sets: New occupancy states added: " << new_occupancy_count << std::endl;
+                // Pairwise L1 distances between all occupancy states in this credible set
+                std::vector<double> l1_distances;
+                std::vector<posg_core::OccupancyState> occs_vec(new_credible_set.get_occupancy_states().begin(), new_credible_set.get_occupancy_states().end());
+                for (size_t i = 0; i < occs_vec.size(); ++i) {
+                    for (size_t j = i + 1; j < occs_vec.size(); ++j) {
+                        double dist = occs_vec[i].distance_to(occs_vec[j]);
+                        l1_distances.push_back(dist);
+                    }
+                }
+                if (!l1_distances.empty()) {
+                    std::sort(l1_distances.begin(), l1_distances.end());
+                    double min_dist = l1_distances.front();
+                    double max_dist = l1_distances.back();
+                    double median_dist = l1_distances[l1_distances.size() / 2];
+                    std::cout << "[DEBUG] expand_credible_sets: Pairwise L1 distances (min/median/max): "
+                              << min_dist << " / " << median_dist << " / " << max_dist << std::endl;
+                } else {
+                    std::cout << "[DEBUG] expand_credible_sets: Only one occupancy state, no pairwise distances." << std::endl;
+                }
             }
-            // Ensure at least one credible set is retained per expansion
-            if (!new_credible_set.get_occupancy_states().empty() || expanded_sets.empty()) {
-                expanded_sets.push_back(new_credible_set);
-            }
+        } catch (const std::exception& ex) {
+            std::cerr << "[EXPAND ERROR] Exception during expansion: " << ex.what() << std::endl;
+            // Optionally print last processed occupancy state/credible set
+            throw;
         }
-        // If no sets were retained, propagate the first input credible set
         if (expanded_sets.empty() && !current_credible_sets.empty()) {
             expanded_sets.push_back(current_credible_sets.front());
         }
@@ -240,64 +310,99 @@ namespace posg_algorithms {
         const posg_core::OccupancyState& occupancy_state,
         const posg_core::LeaderDecisionRule& leader_rule,
         const posg_core::FollowerDecisionRule& follower_rule) {
-        /**
-         * From Paper: τ(o, σL, σF) generates successor occupancy state
-         * 
-         * This function implements the refined τ function that properly handles
-         * belief propagation, state transitions, and observation models
-         */
-        
         posg_core::OccupancyState successor_state;
-        
-        // For each current occupancy state entry
-        const auto& current_distribution = occupancy_state.get_occupancy_distribution();
-        
-        for (const auto& [current_state, leader_histories] : current_distribution) {
-            for (const auto& [leader_history, follower_histories] : leader_histories) {
-                for (const auto& [follower_history, current_prob] : follower_histories) {
-                    if (current_prob <= 0.0) continue;
-                    
-                    // Sample actions from decision rules
-                    posg_core::Action leader_action = leader_rule.sample_action(leader_history);
-                    posg_core::Action follower_action = follower_rule.sample_action(follower_history);
-                    
-                    // For each possible next state
-                    for (int next_state = 0; next_state < transition_model_.get_num_states(); ++next_state) {
-                        // For each possible observation pair
-                        for (int zL_id = 0; zL_id < observation_model_.get_num_leader_observations(); ++zL_id) {
-                            for (int zF_id = 0; zF_id < observation_model_.get_num_follower_observations(); ++zF_id) {
-                                posg_core::Observation leader_obs(zL_id, 0);
-                                posg_core::Observation follower_obs(zF_id, 1);
-                                
-                                // Compute transition and observation probabilities
-                                posg_core::JointAction joint_action(leader_action, follower_action);
-                                posg_core::JointObservation joint_obs(leader_obs, follower_obs);
-                                
-                                double transition_prob = transition_model_.get_transition_probability(
-                                    current_state, joint_action, next_state);
-                                double obs_prob = observation_model_.get_observation_probability(
-                                    next_state, joint_action, joint_obs);
-                                
-                                // Create new histories
-                                posg_core::AgentHistory new_leader_history = leader_history;
-                                new_leader_history.add_action(leader_action);
-                                new_leader_history.add_observation(leader_obs);
-                                
-                                posg_core::AgentHistory new_follower_history = follower_history;
-                                new_follower_history.add_action(follower_action);
-                                new_follower_history.add_observation(follower_obs);
-                                
-                                // Update occupancy probability
-                                double new_prob = current_prob * transition_prob * obs_prob;
-                                successor_state.add_entry(next_state, new_leader_history, new_follower_history, new_prob);
+        const auto& current_entries = occupancy_state.get_entries();
+        std::cout << "[TAU DEBUG] current_entries size: " << current_entries.size() << std::endl;
+        double total_prob = 0.0;
+        int contrib_printed = 0;
+        int entries_added = 0;
+        int last_s = -1, last_aL = -1, last_aF = -1;
+        size_t last_hL_size = 0, last_hF_size = 0;
+        for (const auto& [tuple, prob] : current_entries) {
+            if (prob <= 0.0 || !std::isfinite(prob)) {
+                std::cerr << "[TAU WARNING] Skipping entry with nonpositive or nonfinite prob: " << prob << std::endl;
+                continue;
+            }
+            int s = tuple.state;
+            const auto& hL = tuple.leader_history;
+            const auto& hF = tuple.follower_history;
+            last_s = s;
+            last_hL_size = hL.size();
+            last_hF_size = hF.size();
+            for (int aL = 0; aL < transition_model_.get_num_leader_actions(); ++aL) {
+                double pL = leader_rule.get_prob(hL, posg_core::Action(aL, 0));
+                if (pL <= 0.0 || !std::isfinite(pL)) {
+                    std::cerr << "[TAU WARNING] Skipping leader action with prob: " << pL << std::endl;
+                    continue;
+                }
+                for (int aF = 0; aF < transition_model_.get_num_follower_actions(); ++aF) {
+                    double pF = follower_rule.get_prob(hF, posg_core::Action(aF, 1));
+                    if (pF <= 0.0 || !std::isfinite(pF)) {
+                        std::cerr << "[TAU WARNING] Skipping follower action with prob: " << pF << std::endl;
+                        continue;
+                    }
+                    last_aL = aL;
+                    last_aF = aF;
+                    for (int s_prime = 0; s_prime < transition_model_.get_num_states(); ++s_prime) {
+                        double t_prob = transition_model_.get_prob(s, aL, aF, s_prime);
+                        if (t_prob <= 0.0 || !std::isfinite(t_prob)) {
+                            std::cerr << "[TAU WARNING] Skipping transition with prob: " << t_prob << std::endl;
+                            continue;
+                        }
+                        for (int zL = 0; zL < observation_model_.get_num_leader_observations(); ++zL) {
+                            for (int zF = 0; zF < observation_model_.get_num_follower_observations(); ++zF) {
+                                double o_prob = observation_model_.get_prob(s_prime, aL, aF, zL, zF);
+                                if (o_prob <= 0.0 || !std::isfinite(o_prob)) {
+                                    std::cerr << "[TAU WARNING] Skipping observation with prob: " << o_prob << std::endl;
+                                    continue;
+                                }
+                                double contrib = prob * pL * pF * t_prob * o_prob;
+                                if (contrib <= 0.0 || !std::isfinite(contrib)) {
+                                    std::cerr << "[TAU WARNING] Skipping contrib with value: " << contrib << std::endl;
+                                    continue;
+                                }
+                                auto hL_prime = hL;
+                                hL_prime.append_action_observation(posg_core::Action(aL, 0), zL);
+                                auto hF_prime = hF;
+                                hF_prime.append_action_observation(posg_core::Action(aF, 1), zF);
+                                posg_core::OccupancyState::Key new_tuple{s_prime, hL_prime, hF_prime};
+                                successor_state.increment_entry(new_tuple, contrib);
+                                total_prob += contrib;
+                                ++entries_added;
+                                if (contrib_printed < 5) {
+                                    std::cout << "[TAU DEBUG] s=" << s << ", hL.size=" << hL.size() << ", hF.size=" << hF.size()
+                                              << ", aL=" << aL << ", aF=" << aF << " -> s'=" << s_prime << ", zL=" << zL << ", zF=" << zF << " contrib=" << contrib << std::endl;
+                                    ++contrib_printed;
+                                }
                             }
                         }
                     }
                 }
             }
         }
-        
+        // Defensive normalization and diagnostics
+        double sum = successor_state.total_probability();
+        std::cout << "[TAU DEBUG] successor_state entries: " << successor_state.get_entries().size() << ", total_prob: " << sum << ", entries_added: " << entries_added << std::endl;
+        if (successor_state.get_entries().empty()) {
+            std::cerr << "[TAU WARNING] successor_state is empty after update. Last s=" << last_s << ", hL.size=" << last_hL_size << ", hF.size=" << last_hF_size << ", aL=" << last_aL << ", aF=" << last_aF << std::endl;
+        }
+        if (sum <= 0.0 || !std::isfinite(sum)) {
+            std::cerr << "[TAU ERROR] successor_state has invalid total_prob: " << sum << ". Skipping normalization and returning empty state.\n";
+            for (const auto& [tuple, p] : successor_state.get_entries()) {
+                std::cerr << "[TAU ERROR] Entry: s=" << tuple.state << ", hL.size=" << tuple.leader_history.size() << ", hF.size=" << tuple.follower_history.size() << ", prob=" << p << std::endl;
+            }
+            return posg_core::OccupancyState(); // Return empty state
+        }
         successor_state.normalize();
+        std::vector<std::pair<posg_core::OccupancyState::Key, double>> entries_vec(successor_state.get_entries().begin(), successor_state.get_entries().end());
+        std::sort(entries_vec.begin(), entries_vec.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+        for (size_t i = 0; i < std::min<size_t>(3, entries_vec.size()); ++i) {
+            const auto& [tuple, p] = entries_vec[i];
+            std::cout << "[TAU DEBUG] Top entry " << i << ": s=" << tuple.state << ", hL.size=" << tuple.leader_history.size() << ", hF.size=" << tuple.follower_history.size() << ", prob=" << p << std::endl;
+        }
+        if (!(std::abs(successor_state.total_probability() - 1.0) < 1e-6)) {
+            std::cerr << "[TAU WARNING] successor_state not normalized! total_prob=" << successor_state.total_probability() << std::endl;
+        }
         return successor_state;
     }
 
@@ -499,7 +604,14 @@ namespace posg_algorithms {
             }
             
             // Expansion phase: generate new credible sets
-            std::vector<posg_core::CredibleSet> expanded_sets = expand_credible_sets(credible_sets, 0.1);
+            std::vector<posg_core::CredibleSet> expanded_sets;
+            try {
+                expanded_sets = expand_credible_sets(credible_sets, 0.1);
+            } catch (const std::exception& ex) {
+                std::cerr << "[PBVI ERROR] Exception during expansion: " << ex.what() << std::endl;
+                // Optionally print last processed occupancy state/credible set
+                throw;
+            }
             
             // Add new credible sets to tracking
             for (const auto& new_set : expanded_sets) {
@@ -556,6 +668,7 @@ namespace posg_algorithms {
          * 5. end for
          */
         
+        using clock = std::chrono::steady_clock;
         std::cout << "PBVI with MILP: Starting algorithm with " << initial_occupancy_states.size() 
                   << " initial occupancy states" << std::endl;
         
@@ -576,17 +689,31 @@ namespace posg_algorithms {
 
         double exploitability_bound = std::numeric_limits<double>::infinity();
         
-        // Define reward functions for leader and follower (placeholder, see TODO)
+        // Define reward functions for leader and follower (now using real problem rewards)
         auto reward_function_leader = [this](int state, const posg_core::Action& leader_action, const posg_core::Action& follower_action) -> double {
-            return 1.0; // TODO(domain): connect to problem rewards
+            size_t joint_action_idx = leader_action.get_action_id() * problem_.actions[1].size() + follower_action.get_action_id();
+            if (state < problem_.rewards_leader.size() && joint_action_idx < problem_.rewards_leader[state].size()) {
+                return problem_.rewards_leader[state][joint_action_idx];
+            }
+            return 0.0;
         };
 
         auto reward_function_follower = [this](int state, const posg_core::Action& leader_action, const posg_core::Action& follower_action) -> double {
-            return 1.0; // TODO(domain): connect to problem rewards
+            size_t joint_action_idx = leader_action.get_action_id() * problem_.actions[1].size() + follower_action.get_action_id();
+            if (state < problem_.rewards_follower.size() && joint_action_idx < problem_.rewards_follower[state].size()) {
+                return problem_.rewards_follower[state][joint_action_idx];
+            }
+            return 0.0;
         };
         
+        auto pbvi_start = clock::now();
         for (size_t iteration = 0; iteration < max_iterations; ++iteration) {
+            auto iter_start = clock::now();
             std::cout << "PBVI with MILP: Iteration " << iteration + 1 << std::endl;
+            std::cout << "[DEBUG] Number of credible sets: " << credible_sets.size() << std::endl;
+            size_t total_occ = 0;
+            for (const auto& cs : credible_sets) total_occ += cs.get_occupancy_states().size();
+            std::cout << "[DEBUG] Total occupancy states in all credible sets: " << total_occ << std::endl;
             
             // Improve phase: for each credible set, solve MILP to get greedy decision rule
             std::vector<posg_core::LeaderDecisionRule> optimal_rules;
@@ -597,9 +724,13 @@ namespace posg_algorithms {
                           << credible_set.get_occupancy_states().size() << " occupancy states" << std::endl;
                 
                 // Solve MILP for greedy leader decision rule
+                auto milp_start = clock::now();
                 posg_core::LeaderDecisionRule optimal_rule = milp_solver_.solve_milp(
                     credible_set, value_function_collection, transition_model_, observation_model_,
                     reward_function_leader, reward_function_follower);
+                auto milp_end = clock::now();
+                double milp_sec = std::chrono::duration<double>(milp_end - milp_start).count();
+                std::cout << "[PROFILE] MILP solve time: " << milp_sec << " seconds" << std::endl;
                 
                 optimal_rules.push_back(optimal_rule);
                 
@@ -615,7 +746,14 @@ namespace posg_algorithms {
             value_function_collection = new_alpha_vectors;
             
             // -------------------- Expansion Phase ---------------------------
-            std::vector<posg_core::CredibleSet> expanded_sets = expand_credible_sets(credible_sets, 0.1);
+            std::vector<posg_core::CredibleSet> expanded_sets;
+            try {
+                expanded_sets = expand_credible_sets(credible_sets, 0.1);
+            } catch (const std::exception& ex) {
+                std::cerr << "[PBVI ERROR] Exception during expansion: " << ex.what() << std::endl;
+                // Optionally print last processed occupancy state/credible set
+                throw;
+            }
             
             // Add new credible sets to tracking
             for (const auto& new_set : expanded_sets) {
@@ -643,8 +781,13 @@ namespace posg_algorithms {
             }
             
             // Note: Additional stopping criteria handled above; no further checks needed here.
+            auto iter_end = clock::now();
+            double iter_sec = std::chrono::duration<double>(iter_end - iter_start).count();
+            std::cout << "[PROFILE] PBVI iteration time: " << iter_sec << " seconds" << std::endl;
         }
-        
+        auto pbvi_end = clock::now();
+        double pbvi_sec = std::chrono::duration<double>(pbvi_end - pbvi_start).count();
+        std::cout << "[PROFILE] Total PBVI time: " << pbvi_sec << " seconds" << std::endl;
         // Convert back to ValueFunction format for compatibility
         ValueFunction value_function;
         

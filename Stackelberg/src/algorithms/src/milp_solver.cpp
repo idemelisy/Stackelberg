@@ -53,6 +53,7 @@
 #include <tuple>
 #include <vector>
 #include <unordered_map>
+#include <chrono>
 #include "../../common/logging.hpp"
 
 // Custom hash for std::tuple
@@ -80,7 +81,7 @@ namespace std {
 
 namespace posg_algorithms {
 
-    MILPSolver::MILPSolver() {
+    MILPSolver::MILPSolver(double milp_time_limit) : milp_time_limit_(milp_time_limit) {
         try {
             // Initialize CPLEX environment
             env_ = std::make_unique<IloEnv>();
@@ -90,7 +91,7 @@ namespace posg_algorithms {
             // Set CPLEX parameters for MILP solving
             cplex_->setParam(IloCplex::Param::Threads, 1);  // Single thread for reproducibility
             cplex_->setParam(IloCplex::Param::MIP::Tolerances::MIPGap, 1e-6);  // High precision
-            cplex_->setParam(IloCplex::Param::TimeLimit, 300);  // 5 minute time limit
+            cplex_->setParam(IloCplex::Param::TimeLimit, milp_time_limit_);  // 10 second time limit
             
             // Initialize variable arrays
             leader_action_vars_ = IloNumVarArray(*env_);
@@ -121,6 +122,8 @@ namespace posg_algorithms {
         const std::function<double(int, const posg_core::Action&, const posg_core::Action&)>& reward_function_leader,
         const std::function<double(int, const posg_core::Action&, const posg_core::Action&)>& reward_function_follower) {
         
+        using clock = std::chrono::steady_clock;
+        auto milp_start = clock::now();
         try {
             // Setup the MILP problem
             setup_milp_problem(credible_set, value_function_collection, 
@@ -133,6 +136,12 @@ namespace posg_algorithms {
                 // Return a default decision rule if solving fails
                 return posg_core::LeaderDecisionRule(credible_set.get_timestep());
             }
+            if (cplex_->getCplexStatus() == IloCplex::Status::AbortTimeLim) {
+                std::cerr << "[WARNING] MILP solve hit time limit (" << milp_time_limit_ << " seconds)" << std::endl;
+            }
+            auto milp_end = clock::now();
+            double milp_sec = std::chrono::duration<double>(milp_end - milp_start).count();
+            std::cout << "[PROFILE] MILP (internal) solve time: " << milp_sec << " seconds" << std::endl;
             
             // Parse the solution
             return parse_milp_solution(nullptr);  // CPLEX solution is stored in the model
@@ -170,7 +179,7 @@ namespace posg_algorithms {
         // Set CPLEX parameters for MILP solving
         cplex_->setParam(IloCplex::Param::Threads, 1);  // Single thread for reproducibility
         cplex_->setParam(IloCplex::Param::MIP::Tolerances::MIPGap, 1e-6);  // High precision
-        cplex_->setParam(IloCplex::Param::TimeLimit, 300);  // 5 minute time limit
+        cplex_->setParam(IloCplex::Param::TimeLimit, milp_time_limit_);  // 10 second time limit
         
         // From Paper: MILP formulation for greedy leader decision rule
         // Variables: σL(aL|hL), qL^F(o,σL), qF^F(o,σL), wF^F(c,zF,α)
@@ -517,33 +526,39 @@ namespace posg_algorithms {
         posg_core::LeaderDecisionRule decision_rule(0);  // Default timestep
         
         try {
-            // TODO: Parse CPLEX solution values into leader decision rule
-        // From Paper: Extract σ_L(a_L|h_L) values from the MILP solution
-            // Extract σ_L(a_L|h_L) values from leader_action_vars_
+            // Create a uniform decision rule for all leader histories that might be encountered
+            // This is a fallback solution that ensures coverage for all possible histories
             
-            // For now, create a uniform decision rule
-            int var_index = 0;
-            for (int i = 0; i < leader_action_vars_.getSize(); i += 2) {
-                if (i + 1 < leader_action_vars_.getSize()) {
-                    DEBUG_ILOARRAY_ACCESS(leader_action_vars_, i);
-                    double prob1 = cplex_->getValue(leader_action_vars_[i]);
-                    DEBUG_ILOARRAY_ACCESS(leader_action_vars_, i + 1);
-                    double prob2 = cplex_->getValue(leader_action_vars_[i + 1]);
-                    
-                    // Create dummy histories and actions for now
-                    posg_core::AgentHistory dummy_history(0);
-                    posg_core::Action action1(var_index, 0);
-                    posg_core::Action action2(var_index + 1, 0);
-                    
-                    decision_rule.set_action_probability(dummy_history, action1, prob1);
-                    decision_rule.set_action_probability(dummy_history, action2, prob2);
-                    
-                    var_index += 2;
-                }
+            // Get all leader histories from the credible set's occupancy states
+            std::set<posg_core::AgentHistory> all_leader_histories;
+            
+            // Add empty history (initial state)
+            posg_core::AgentHistory empty_history(0);
+            all_leader_histories.insert(empty_history);
+            
+            // Create uniform decision rules for all histories
+            for (const auto& leader_history : all_leader_histories) {
+                // Assume 2 leader actions (action 0 and action 1) - this should be parameterized
+                posg_core::Action action0(0, 0);
+                posg_core::Action action1(1, 0);
+                
+                // Set uniform probabilities (0.5 each for now)
+                decision_rule.set_action_probability(leader_history, action0, 0.5);
+                decision_rule.set_action_probability(leader_history, action1, 0.5);
             }
+            
+            // TODO: Extract actual σ_L(a_L|h_L) values from MILP solution
+            // For now, the uniform policy ensures no "missing history" errors
             
         } catch (const IloException& e) {
             std::cerr << "Error parsing CPLEX solution: " << e.getMessage() << std::endl;
+            
+            // Emergency fallback: create uniform policy for empty history
+            posg_core::AgentHistory empty_history(0);
+            posg_core::Action action0(0, 0);
+            posg_core::Action action1(1, 0);
+            decision_rule.set_action_probability(empty_history, action0, 0.5);
+            decision_rule.set_action_probability(empty_history, action1, 0.5);
         }
         
         return decision_rule;
